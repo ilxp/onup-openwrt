@@ -26,7 +26,7 @@
 
 # ============ 标题 ============
 TITLE() {
-    clear && echo "onup(System Online UPgrade) By ilxp ${Version}"
+    clear && echo "ONUP(Online UPgrade) By ilxp ${Version}"
 }
 
 # 全局标记:当前是否在执行升级流程
