@@ -1,0 +1,66 @@
+<!-- Copyright (C) 2026 ilxp <https://github.com/ilxp> -->
+
+<% local module = require "luci.dispatcher" -%>
+
+<script type="text/javascript">
+	//<![CDATA[
+
+	function refresh_fwlog(btn) {
+		if (!confirm('确定刷新?将从云端重新获取最新发布日志。')) {
+			return;
+		}
+
+		var ta = document.getElementById('fwlog_textarea');
+		if (ta) ta.innerHTML = '(正在从云端获取...)';
+
+		if (btn) {
+			btn.disabled = true;
+			setTimeout(function() { btn.disabled = false; }, 3000);
+		}
+
+		XHR.get('<%=module.build_url("admin/system/onup/clear_fw_log")%>',
+			null,
+			function(x) {
+				if (x && x.status == 200) {
+					if (ta) ta.innerHTML = '(已获取,正在加载...)';
+					// 手动触发一次内容拉取
+					load_fwlog();
+				} else {
+					if (ta) ta.innerHTML = '(刷新失败,请重试)';
+				}
+			}
+		);
+	}
+
+	function load_fwlog() {
+		XHR.get('<%=module.build_url("admin/system/onup/print_fw_log")%>',
+			null,
+			function(x) {
+				if (x && x.status == 200) {
+					var ta = document.getElementById('fwlog_textarea');
+					if (ta) {
+						ta.innerHTML = x.responseText;
+						ta.scrollTop = 0;
+					}
+				}
+			}
+		);
+	}
+
+	// 页面加载时读一次缓存(不触发拉取)
+	window.addEventListener('load', function() {
+		load_fwlog();
+	});
+	//]]>
+</script>
+
+<fieldset class="cbi-section" id="_fwlog_fieldset">
+	<div class="cbi-value-description" style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+		<span>ℹ️ 显示当前固件标签对应的云端发布日志。</span>
+		<button type="button" class="cbi-button cbi-button-reset" onclick="refresh_fwlog(this)">刷新日志</button>
+	</div>
+	<div style="margin-bottom: 8px; padding: 6px 10px; font-size: 0.9em; color: #8a6d3b; background: #fcf8e3; border: 1px solid #faebcc; border-radius: 4px;">
+		ℹ️ 本页不自动拉取日志。需要点击右上角「刷新日志」才会从云端获取最新内容。
+	</div>
+	<textarea id="fwlog_textarea" class="cbi-input-textarea" style="width: 100%;margin-top: 10px;" data-update="change" rows="30" wrap="off" readonly="readonly"></textarea>
+</fieldset>

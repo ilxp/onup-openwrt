@@ -1,0 +1,185 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2026 ilxp <https://github.com/ilxp>
+# /etc/init.d/onup
+#
+# 从 UCI 读定时配置,生成 /etc/crontabs/root 中的 cron 任务
+# 配置直接同步到 custom
+
+START=99
+LOGGER="logger -t [onup]"
+
+Script_File="$(command -v onup)"
+Script_Cmd="$Script_File -u"
+
+CRONTAB="/etc/crontabs/root"
+CRON_TAG="## onup crontab"
+CUSTOM_FILE="/etc/onup/custom"
+
+# ============================================================
+# UCI 读取工具
+# ============================================================
+uci_get_by_type() {
+	local ret=$(uci get onup.@$1[$2].$3 2>/dev/null)
+	echo "${ret:=$4}"
+}
+
+# ============================================================
+# 同步单个 key=value 到 custom
+# 用法: sync_custom_kv <key> <val> [allow_empty]
+#   val 非空               → 替换/追加
+#   val 为空 + allow_empty=1 → 删除该 key(让脚本走默认探测)
+#   val 为空 + allow_empty=0 → 跳过
+# ============================================================
+sync_custom_kv() {
+	local key="$1" val="$2" allow_empty="${3:-0}"
+	[ -f "$CUSTOM_FILE" ] || touch "$CUSTOM_FILE"
+
+	if [ -z "$val" ]; then
+		[ "$allow_empty" = "1" ] && sed -i "/^${key}=/d" "$CUSTOM_FILE"
+		return 0
+	fi
+
+	# 转义 sed 替换串里的特殊字符
+	local val_esc
+	val_esc=$(printf '%s' "$val" | sed 's/[\/&|\\]/\\&/g')
+
+	if grep -q "^${key}=" "$CUSTOM_FILE" 2>/dev/null; then
+		sed -i "s|^${key}=.*|${key}=${val_esc}|" "$CUSTOM_FILE"
+	else
+		echo "${key}=${val}" >> "$CUSTOM_FILE"
+	fi
+}
+
+# ============================================================
+# 删除旧 cron 任务
+# ============================================================
+remove_cron_tasks() {
+	[ -f "$CRONTAB" ] || return 0
+	sed -i "/$CRON_TAG/d" "$CRONTAB" 2> /dev/null
+}
+
+# ============================================================
+# 启动(由 LuCI 或系统触发)
+# ============================================================
+start() {
+	# ---------- 1. 读 UCI 字段 ----------
+	local enable schedule_type week day hour minute
+	local api_url flag logpath
+	local upgrade_no_config skip_verify force_flash decompress
+	local mirror_list mirror_random mirror_retry x86_boot_method
+	local downloader
+
+	enable=$(uci_get_by_type onup 0 enable 0)
+	schedule_type=$(uci_get_by_type onup 0 schedule_type weekly)
+	week=$(uci_get_by_type onup 0 week 0)
+	day=$(uci_get_by_type onup 0 day 1)
+	hour=$(uci_get_by_type onup 0 hour 0)
+	minute=$(uci_get_by_type onup 0 minute 30)
+	api_url=$(uci_get_by_type onup 0 api_url "")
+	flag=$(uci_get_by_type onup 0 flag "")
+	logpath=$(uci_get_by_type onup 0 logpath "")
+
+	upgrade_no_config=$(uci_get_by_type onup 0 upgrade_no_config 0)
+	skip_verify=$(uci_get_by_type onup 0 skip_verify 0)
+	force_flash=$(uci_get_by_type onup 0 force_flash 0)
+	decompress=$(uci_get_by_type onup 0 decompress 0)
+
+	mirror_list=$(uci_get_by_type onup 0 mirror_list "")
+	mirror_random=$(uci_get_by_type onup 0 mirror_random "")
+	mirror_retry=$(uci_get_by_type onup 0 mirror_retry "")
+	x86_boot_method=$(uci_get_by_type onup 0 x86_boot_method "")
+	downloader=$(uci_get_by_type onup 0 downloader "")
+
+	# ---------- 2. 检查脚本 ----------
+	if [ ! -x "$Script_File" ]; then
+		${LOGGER} "Unable to access onup, exit ..."
+		stop
+		return 1
+	fi
+
+	# ---------- 3. 同步配置到 custom(无论是否启用都执行) ----------
+	# 3.1 api_url/flag/logpath 走 onup 命令(会自行写 custom)
+	[ -n "$api_url" ] && $Script_File -C "$api_url" > /dev/null 2>&1
+	[ -n "$flag" ]    && $Script_File --flag "$flag" > /dev/null 2>&1
+	[ -n "$logpath" ] && $Script_File --log -path "$logpath" > /dev/null 2>&1
+
+	# 3.2 mirror_* / x86_boot_method / downloader 直接写 custom
+	# (onup 没有对应的命令行开关,只能 sed 直接改)
+	sync_custom_kv "Mirror_List"      "$mirror_list" 1
+	sync_custom_kv "Mirror_Random"    "$mirror_random" 1
+	sync_custom_kv "Mirror_Retry"     "$mirror_retry" 1
+	sync_custom_kv "x86_Boot_Method"  "$x86_boot_method" 1
+	sync_custom_kv "Downloader"       "$downloader" 1
+
+	# ---------- 4. 未启用 → 清 cron + 退出 ----------
+	if [ "$enable" != "1" ]; then
+		${LOGGER} "onup Service is disabled ..."
+		stop
+		return 0
+	fi
+
+	# ---------- 5. 构造 cron 时间表达式 ----------
+	[ -z "$hour" ]   && hour=0
+	[ -z "$minute" ] && minute=30
+
+	local cron_time
+	case "$schedule_type" in
+		monthly)
+			[ -z "$day" ] && day=1
+			[ "$day" -lt 1 ]  && day=1
+			[ "$day" -gt 31 ] && day=31
+			cron_time="$minute $hour $day * *"
+			${LOGGER} "Schedule Type: Monthly (day=$day)"
+		;;
+		weekly|*)
+			[ -z "$week" ] && week=0
+			[ "$week" = "7" ] && week='*'
+			cron_time="$minute $hour * * $week"
+			${LOGGER} "Schedule Type: Weekly (week=$week)"
+		;;
+	esac
+
+	# ---------- 6. 组装额外参数 ----------
+	local extra_args=""
+	# 注: -P/--proxy 是命令行临时镜像,定时任务不传(走配置文件 Mirror_List)
+
+	# 4 个独立高级配置开关
+	[ "$upgrade_no_config" = "1" ] && extra_args="$extra_args -n"
+	[ "$skip_verify" = "1" ]       && extra_args="$extra_args --skip-verify"
+	[ "$force_flash" = "1" ]       && extra_args="$extra_args -F"
+	[ "$decompress" = "1" ]        && extra_args="$extra_args --decompress"
+
+	# ---------- 7. 重写 cron 任务 ----------
+	remove_cron_tasks
+	${LOGGER} "Creating cron_task [$cron_time $Script_Cmd $extra_args] ..."
+	echo "$cron_time $Script_Cmd $extra_args		$CRON_TAG" >> "$CRONTAB"
+	/etc/init.d/cron restart
+
+	${LOGGER} "onup Service started."
+}
+
+# ============================================================
+# 停止(删除 cron)
+# ============================================================
+stop() {
+	${LOGGER} "Removing all cron tasks ..."
+	remove_cron_tasks
+	/etc/init.d/cron restart
+}
+
+# ============================================================
+# 禁用(由 LuCI 的 disable 调用)
+# ============================================================
+disable() {
+	${LOGGER} "Closing onup Service ..."
+	uci set onup.@onup[0].enable="0" 2> /dev/null
+	uci commit onup 2>/dev/null
+	stop
+}
+
+# ============================================================
+# procd reload 触发
+# ============================================================
+service_triggers() {
+	procd_add_reload_trigger "onup"
+}

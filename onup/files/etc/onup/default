@@ -1,0 +1,33 @@
+## 请不要修改此文件中的内容, 自定义变量请在 custom 中添加或修改
+## 该文件将在运行 onup 脚本时被读取, 且该文件中的内容优先级低于 custom
+# ============================================================
+# onup - 编译时默认配置
+# ============================================================
+
+# ============ 数据源 ============
+API_Url=https://github.com/ilxp/oprx-release/releases/download/firmware/oR.json
+Script_Url=https://raw.githubusercontent.com/ilxp/onup-openwrt/main/onup/files/bin/onup
+
+# ============ 固件信息 ============
+Author=ilxp
+TARGET_FLAG=oR
+FW_Prefix=onup
+FW_Image_Type=combined
+OP_AUTHOR=openwrt
+OP_REPO=openwrt
+OP_BRANCH=25.12
+OP_VERSION=25.12.5-2026100111
+
+# ============ 设备信息 ============
+TARGET_PROFILE=x86_64
+x86_Boot_Method=auto
+
+# ============ 镜像(可选,留空 = 直连) ============
+Mirror_List=https://gh-proxy.org,https://ghfast.top,https://ghproxy.net
+#Mirror_List=
+Mirror_Random=1
+Mirror_Retry=1
+
+# ============ 运行 ============
+Log_Path=/tmp
+Downloader=auto

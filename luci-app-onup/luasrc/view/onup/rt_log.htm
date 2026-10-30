@@ -1,0 +1,63 @@
+<!-- Copyright (C) 2026 ilxp <https://github.com/ilxp> -->
+
+<% local module = require "luci.dispatcher" -%>
+
+<script type="text/javascript">
+	//<![CDATA[
+	// 静默期:清空成功后 3 秒内不让 poll 覆盖 textarea
+	var _suppress_poll_until = 0;
+
+	function clearlog(btn) {
+		if (!confirm('确定清空运行日志?')) {
+			return;
+		}
+
+		var ta = document.getElementById('log_textarea');
+		// 立即反馈,不等服务端返回
+		if (ta) ta.innerHTML = '(正在清空...)';
+
+		// 短暂禁用按钮,防连点
+		if (btn) {
+			btn.disabled = true;
+			setTimeout(function() { btn.disabled = false; }, 3000);
+		}
+
+		XHR.get('<%=module.build_url("admin/system/onup/clear_last_log")%>',
+			null,
+			function(x) {
+				if (x && x.status == 200) {
+					if (ta) ta.innerHTML = '(已清空,等待新的日志...)';
+					// 3 秒静默期,避免 poll 立即覆盖
+					_suppress_poll_until = Date.now() + 3000;
+				} else {
+					if (ta) ta.innerHTML = '(清空失败,请重试)';
+				}
+			}
+		);
+	}
+
+	XHR.poll(2, '<%=module.build_url("admin/system/onup/print_log")%>', null,
+		function(x, data) {
+			// 静默期内不覆盖,让用户看清"已清空"提示
+			if (Date.now() < _suppress_poll_until) return;
+
+			if (x && x.status == 200) {
+				var log_textarea = document.getElementById('log_textarea');
+				log_textarea.innerHTML = x.responseText;
+				log_textarea.scrollTop = log_textarea.scrollHeight;
+			}
+		}
+	);
+	//]]>
+</script>
+
+<fieldset class="cbi-section" id="_log_fieldset">
+	<div class="cbi-value-description" style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+		<span>ℹ️ 日志每 2 秒自动刷新。更新过程可能需要 30-60 秒，请耐心等待。</span>
+		<button type="button" class="cbi-button cbi-button-reset" onclick="clearlog(this)">清空已完成的日志</button>
+	</div>
+	<div style="margin-bottom: 8px; padding: 6px 10px; font-size: 0.9em; color: #8a6d3b; background: #fcf8e3; border: 1px solid #faebcc; border-radius: 4px;">
+	ℹ️ 清空仅删除历史日志；正在运行的升级任务会继续写入新日志。
+	</div>
+	<textarea id="log_textarea" class="cbi-input-textarea" style="width: 100%;margin-top: 10px;" data-update="change" rows="30" wrap="off" readonly="readonly"></textarea>
+</fieldset>

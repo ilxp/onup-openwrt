@@ -1,0 +1,280 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-onup\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-01 01:00+0800\n"
+"PO-Revision-Date: 2026-10-1 01:00+0800\n"
+"Last-Translator: ilxp\n"
+"Language-Team: Chinese (Simplified)\n"
+"Language: zh_CN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+# ============================================================
+# controller/onup.lua
+# ============================================================
+msgid "ONUP"
+msgstr "在线升级"
+
+msgid "General Settings"
+msgstr "通用设置"
+
+msgid "Manually Upgrade"
+msgstr "手动更新"
+
+msgid "Runtime Log"
+msgstr "运行日志"
+
+msgid "Release Notes"
+msgstr "发布日志"
+
+# ============================================================
+# model/cbi/onup/main.lua - 页面头部
+# ============================================================
+msgid "ONUP - Online UPgrade"
+msgstr "ONUP - 在线升级"
+
+msgid "supports both command-line and LuCI interfaces, multi-mirror acceleration, multiple downloaders, scheduled upgrades, and SHA256 verification."
+msgstr "支持命令行与 LuCI 双界面、多镜像加速、多种下载器、定时升级以及 SHA256 校验。"
+
+msgid "powered by openwrt-onup"
+msgstr "由 openwrt-onup 提供支持"
+
+# ============================================================
+# main.lua - 数据源
+# ============================================================
+msgid "Upgrade Source"
+msgstr "升级源"
+
+msgid "URL of the JSON manifest (upgrade source)."
+msgstr "JSON 清单(升级源)的 URL。"
+
+msgid "Firmware Flag"
+msgstr "固件标签"
+
+msgid "Filter firmware by this tag"
+msgstr "按此标签筛选固件"
+
+msgid "Log Path"
+msgstr "日志路径"
+
+msgid "Directory to save onup runtime log"
+msgstr "保存 onup 运行日志的目录"
+
+# ============================================================
+# main.lua - 镜像配置
+# ============================================================
+msgid "Mirror List"
+msgstr "镜像列表"
+
+msgid "Comma/semicolon/space separated URL list. Empty = direct connect."
+msgstr "使用逗号/分号/空格分隔的 URL 列表。留空则直连原始地址。"
+
+msgid "Example: https://aa.com,https://bb.com,https://cc.com"
+msgstr "示例: https://aa.com,https://bb.com,https://cc.com"
+
+msgid "Randomize Mirror Order"
+msgstr "随机镜像顺序"
+
+msgid "Shuffle mirror order for each download to distribute load"
+msgstr "每次下载随机打乱镜像顺序，以分散负载"
+
+msgid "Enabled (Recommend)"
+msgstr "启用 (推荐)"
+
+msgid "Disabled (Fixed Order)"
+msgstr "禁用 (固定顺序)"
+
+msgid "Mirror Retry"
+msgstr "镜像重试次数"
+
+msgid "Retry count per mirror (1-5)"
+msgstr "每个镜像的重试次数 (1-5)"
+
+# ============================================================
+# main.lua - 下载器
+# ============================================================
+msgid "Downloader"
+msgstr "下载器"
+
+msgid "Download tool. 'Auto' tries each by priority. If the specified one is missing, upgrade will fail."
+msgstr "下载工具。'自动' 会按优先级逐个尝试。若指定的下载器不存在，升级将失败。"
+
+msgid "Auto (Recommend)"
+msgstr "自动 (推荐)"
+
+# ============================================================
+# main.lua - x86 专属
+# ============================================================
+msgid "Boot Mode"
+msgstr "引导方式"
+
+msgid "Boot Mode of downloaded firmware. Auto-detected if empty."
+msgstr "下载固件的引导方式。留空则自动检测。"
+
+msgid "Auto Detect"
+msgstr "自动检测"
+
+msgid "UEFI"
+msgstr "UEFI"
+
+msgid "BIOS (Legacy)"
+msgstr "BIOS (传统)"
+
+# ============================================================
+# main.lua - 启用开关
+# ============================================================
+msgid "Enable Scheduled Upgrade"
+msgstr "启用定时更新"
+
+msgid "When enabled, onup will automatically check and upgrade firmware at the specified time."
+msgstr "启用后，将在指定时间段自动检查并更新固件。"
+
+msgid "All timing options below take effect only when this switch is ON."
+msgstr "以下所有定时选项仅在开启此开关后生效。"
+
+# ============================================================
+# main.lua - 定时任务
+# ============================================================
+msgid "Schedule Type"
+msgstr "计划类型"
+
+msgid "Weekly: update on a specific day of week. Monthly: update on a specific day of month."
+msgstr "按周: 在每周的某一天更新。按月: 在每月的某一天更新。"
+
+msgid "Weekly"
+msgstr "按周"
+
+msgid "Monthly"
+msgstr "按月"
+
+msgid "Update Day (Weekly)"
+msgstr "更新日 (按周)"
+
+msgid "Recommend to set the onup time to an uncommon time"
+msgstr "建议设置定时更新时间为设备不常用的时间"
+
+msgid "Everyday"
+msgstr "每天"
+
+msgid "Monday"
+msgstr "星期一"
+
+msgid "Tuesday"
+msgstr "星期二"
+
+msgid "Wednesday"
+msgstr "星期三"
+
+msgid "Thursday"
+msgstr "星期四"
+
+msgid "Friday"
+msgstr "星期五"
+
+msgid "Saturday"
+msgstr "星期六"
+
+msgid "Sunday"
+msgstr "星期日"
+
+msgid "Update Day (Monthly)"
+msgstr "更新日 (按月)"
+
+msgid "Day of month, 1-31. If the month has fewer days, the last day is used."
+msgstr "每月第几日，范围 1-31。若当月天数不足，则取最后一日。"
+
+msgid "Hour"
+msgstr "小时"
+
+msgid "Minute"
+msgstr "分钟"
+
+# ============================================================
+# main.lua - 高级选项
+# ============================================================
+msgid "Advanced Options"
+msgstr "高级选项"
+
+msgid "These options apply ONLY to SCHEDULED upgrades, not to manual buttons."
+msgstr "这些选项仅作用于定时更新，不影响手动按钮。"
+
+msgid "Upgrade without keeping config"
+msgstr "不保留配置"
+
+msgid "Equivalent to [onup -n]"
+msgstr "等价于 [onup -n]"
+
+msgid "All current settings will be LOST after upgrade!"
+msgstr "升级后所有当前设置将丢失！"
+
+msgid "Skip SHA256 Verify"
+msgstr "跳过固件 SHA256 校验"
+
+msgid "Equivalent to [onup --skip-verify]"
+msgstr "等价于 [onup --skip-verify]"
+
+msgid "DANGEROUS! Only enable if you know what you're doing."
+msgstr "危险！仅在明确知道后果时启用。"
+
+msgid "Force Flash Firmware"
+msgstr "强制刷写固件"
+
+msgid "Equivalent to [onup -F]"
+msgstr "等价于 [onup -F]"
+
+msgid "DANGEROUS! Skip version check and force write."
+msgstr "危险！跳过版本检查并强制写入。"
+
+msgid "Decompress Firmware First"
+msgstr "优先解压固件"
+
+msgid "Equivalent to [onup --decompress]"
+msgstr "等价于 [onup --decompress]"
+
+msgid "Extract .img.gz or .zip before flashing. Recommended for .zip firmware."
+msgstr "刷写前先解压 .img.gz 或 .zip。推荐用于 .zip 格式固件。"
+
+# ============================================================
+# model/cbi/onup/manual.lua
+# ============================================================
+msgid "Manually upgrade Firmware or Script"
+msgstr "手动更新固件或脚本"
+
+msgid "Check Updates"
+msgstr "检查更新"
+
+msgid "Please wait for the page to refresh after clicking Check Updates button"
+msgstr "点击检查更新按钮后请等待页面自动刷新"
+
+msgid "Test Update"
+msgstr "测试更新"
+
+msgid "Test the full upgrade process WITHOUT actually flashing the firmware"
+msgstr "测试完整升级流程，但不会实际刷写固件"
+
+msgid "Result will be shown in the Upgrade Log tab"
+msgstr "结果将在「运行日志」标签页显示"
+
+msgid "Do Test"
+msgstr "执行测试"
+
+msgid "Upgrade Firmware"
+msgstr "更新固件"
+
+msgid "Upgrade Normally (KEEP CONFIG)"
+msgstr "更新固件 (保留配置)"
+
+msgid "Do Upgrade"
+msgstr "执行更新"
+
+msgid "Upgrade without keeping System-Config"
+msgstr "更新固件 (不保留配置)"
+
+msgid "Upgrade Script"
+msgstr "更新脚本"
+
+msgid "Using the latest Script may solve some compatibility problems"
+msgstr "使用最新脚本也许能解决一些兼容性问题"
