@@ -30,15 +30,18 @@
 # 【配置优先级】custom > default
 # ============================================================
 
+# ============ sed 转义辅助(模块级) ============
+_escape_sed_regex() { printf '%s' "$1" | sed 's/[.[\*^$(){}+?|\\/]/\\&/g'; }
+_escape_sed_repl()  { printf '%s' "$1" | sed 's/[\/&|\\]/\\&/g'; }
+
 # ============ 读配置变量 ============
 GET_VARIABLE() {
-    local key="$1" file="$2" Result
-    Result="$(grep -E "^${key}=" "$file" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '\r')"
-    if grep -q -E "^${key}=" "$file" 2>/dev/null; then
-        echo "$Result"
-        return 0
-    fi
-    return 1
+    local key="$1" file="$2" line
+    line="$(grep -E "^${key}=" "$file" 2>/dev/null | tail -n1)"
+    [[ -z "$line" ]] && return 1
+    line="${line#*=}"
+    printf '%s\n' "${line//$'\r'/}"
+    return 0
 }
 
 # ============ 编辑配置变量 ============
@@ -58,9 +61,6 @@ EDIT_VARIABLE() {
 
     local Key="$1" Val="$2" RETURN=1
     [[ -z "$Key" ]] && ECHO r "环境变量 Key 不能为空!" && return 1
-
-    _escape_sed_regex() { printf '%s' "$1" | sed 's/[.[\*^$(){}+?|\\/]/\\&/g'; }
-    _escape_sed_repl()  { printf '%s' "$1" | sed 's/[\/&|\\]/\\&/g'; }
 
     local Key_Re="$(_escape_sed_regex "$Key")"
     local Val_Repl="$(_escape_sed_repl "${Val:-}")"

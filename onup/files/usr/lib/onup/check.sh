@@ -198,6 +198,20 @@ if [[ -n "$residue" ]]; then
 else
     ok "无 GitHub 相关旧字段残留"
 fi
+
+# 5. soup 命名残留(已完全改名,任何 soup 引用都是 bug)
+#    覆盖范围: 模块库 + 主入口
+#    排除: check.sh 自身、整行注释
+residue=$(grep -rnE 'soup_Main|SOUP_QUIET_LOG|/soup([^a-zA-Z0-9_]|$)' \
+    "$LIB_PATH"/*.sh "$MAIN" 2>/dev/null \
+    | grep -v '/check\.sh:' \
+    | grep -vE ':[0-9]+:[[:space:]]*#')
+if [[ -n "$residue" ]]; then
+    fail "存在 soup 命名残留(已完全改名,必须清理):"
+    echo "$residue" | sed 's/^/        /'
+else
+    ok "无 soup 命名残留"
+fi
 echo
 
 # ============================================================
@@ -220,6 +234,18 @@ else
         warn "aria2c 使用 --lowest-speed-limit(弱网下易误判中断)"
     else
         ok "无 --lowest-speed-limit(弱网友好)"
+    fi
+
+    # 并发连接数检查:过高易触发 ghfast.top 等镜像的 429 限流
+    _x_val=$(echo "$ARIA2C_LINE" | grep -oE -- '-x [0-9]+' | head -1 | awk '{print $2}')
+    if [[ -n "$_x_val" && "$_x_val" =~ ^[0-9]+$ ]]; then
+        if (( _x_val > 8 )); then
+            warn "aria2c -x ${_x_val} 过高(镜像易 429 限流),建议 ≤4"
+        else
+            ok "aria2c -x ${_x_val} (镜像友好)"
+        fi
+    else
+        warn "download.sh 未显式设置 -x 并发数"
     fi
 fi
 

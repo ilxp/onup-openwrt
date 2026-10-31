@@ -22,7 +22,6 @@
 # ============================================================
 
 # ============ 从文件名解析属性 ============
-# ============ 从文件名解析属性 ============
 _parse_fw_name() {
     local name="$1"
     _PN_tag="" _PN_version="" _PN_format="" _PN_image_type="" _PN_boot="" _PN_suffix=""
@@ -116,8 +115,8 @@ pick_best_firmware() {
         _best_item=""
 
         while IFS= read -r _item; do
-            _name="$(echo "${_item}" | jq -r '.name // ""')"
-            _bd="$(echo   "${_item}" | jq -r '.build_date // "0"')"
+            # 单次 jq 取 name + build_date(用 \x1f 作字段分隔符,不误切含空格的 name)
+            IFS=$'\x1f' read -r _name _bd <<<"$(echo "${_item}" | jq -r '[.name // "", .build_date // "0"] | join("\u001f")')"
             [[ -z "${_name}" || "${_name}" == "null" ]] && continue
 
             # profile 检查(双保险)
@@ -231,7 +230,6 @@ GET_FW_INFO() {
 }
 
 # ============ 版本比较 ============
-# (保留原有实现,略)
 VERSION_COMPARE() {
     local new="$1" old="$2"
     [[ -z "$new" || -z "$old" ]] && { echo 0; return 0; }

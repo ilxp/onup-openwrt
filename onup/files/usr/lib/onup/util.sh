@@ -9,19 +9,19 @@
 # 【导出函数】
 #   TITLE                    清屏 + 显示脚本头
 #   ECHO <颜色> <消息>       彩色输出 + 写日志
-#     颜色: r/g/b/y/x/w
 #   LOGGER <消息>            仅写日志文件
-#   RM <路径>...             安全删除(拒绝 / ./ .. 等)
+#   RM <路径>...             安全删除
 #   MEMINFO <Mem|Swap|All>   输出内存 MB
 #   SPACEINFO <路径>         输出可用空间 MB
 #   require_pkg <命令>...    返回 0=全存在 1=缺依赖
 #   CHECK_PKG <命令>         输出 true/false
-#   CHECK_PKG_DEPENDS -e <包>...   仅用于 --chk 显示
+#   CHECK_PKG_DEPENDS -e     仅用于 --chk 显示
 #   RANDOM_HEX <位数>        随机十六进制
-#   GET_SHA256SUM <文件> <位数>     输出 SHA256 前 N 位
+#   GET_SHA256SUM <文件> <位数>
 #   NETWORK_CHECK <URL>      输出 true/false
-#   KILL_PROCESS <pattern>   杀掉匹配进程
+#   KILL_PROCESS <pattern>   杀掉匹配进程(含 aria2c/wget/curl 孤儿)
 #   CHECK_TIME <文件> <分钟> 输出 true/false
+#   _small_file_downloader   为小文件选下载器(优先单连接,镜像友好)
 # ============================================================
 
 # ============ 标题 ============
@@ -60,13 +60,16 @@ ECHO() {
 }
 
 # ============ 日志 ============
+# ONUP_QUIET_LOG=1 时静默(LuCI 后台拉取时避免污染 rt_log)
+# -T 测试模式忽略静默,便于排查
 LOGGER() {
-    # LuCI 后台拉取时静默,不污染 rt_log
-    [[ "${SOUP_QUIET_LOG}" == "1" ]] && return 0
+    if [[ "${Test_Mode:-0}" != "1" && "${ONUP_QUIET_LOG:-0}" == "1" ]]; then
+        return 0
+    fi
 
-    [[ ! -d ${Log_Path} ]] && mkdir -p ${Log_Path}
-    [[ ! -f ${Log_Path}/${Log_File} ]] && touch -f ${Log_Path}/${Log_File}
-    echo "[$(date "+%H:%M:%S")] [$$] $*" >> ${Log_Path}/${Log_File}
+    [[ ! -d "${Log_Path}" ]] && mkdir -p "${Log_Path}"
+    [[ ! -f "${Log_Path}/${Log_File}" ]] && : > "${Log_Path}/${Log_File}"
+    echo "[$(date "+%H:%M:%S")] [$$] $*" >> "${Log_Path}/${Log_File}"
 }
 
 # ============ 安全删除 ============
@@ -180,7 +183,6 @@ CHECK_PKG() {
     fi
 }
 
-# ============ 依赖列表检测(用于 --chk) ============
 CHECK_PKG_DEPENDS() {
     case $1 in
         -e)
@@ -249,7 +251,7 @@ NETWORK_CHECK() {
 
 # ============ 结束其他 onup 进程 ============
 KILL_PROCESS() {
-    local pattern="$1" pids="" ps_out pid_col header
+    local pattern="$1" pids="" ps_out pid_col header pid
 
     if command -v pgrep >/dev/null 2>&1 && pgrep -f "$pattern" >/dev/null 2>&1; then
         pids="$(pgrep -f "$pattern" 2>/dev/null | grep -v "^$$\$" || true)"
@@ -268,27 +270,28 @@ KILL_PROCESS() {
             '$0 ~ pat && $0 !~ /grep/ && $col != self {print $col}' 2>/dev/null || true)"
     fi
 
-    local pid
-	for pid in $pids; do
-		[[ "$pid" =~ ^[0-9]+$ ]] || continue
-		kill -9 "$pid" 2>/dev/null && LOGGER "结束进程 PID: $pid (pattern=$pattern)"
-	done
+    for pid in $pids; do
+        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        kill -9 "$pid" 2>/dev/null && LOGGER "结束进程 PID: $pid (pattern=$pattern)"
+    done
 
-	# 兜底杀掉 aria2c
-	# 场景: 上一个 onup 的父进程被杀,但它的 aria2c 变孤儿继续下载,
-	#       与本次启动的 aria2c 同时写同一个文件 → SHA256 失败
-	# 处理: 用 killall 干掉所有 aria2c(设备上同时只有一个 onup,
-	#       只有它使用 aria2c,误杀概率极低)
-	if command -v killall >/dev/null 2>&1; then
-		killall -9 aria2c 2>/dev/null && LOGGER "已清理残留 aria2c 进程"
-	fi
+    # 兜底:清理残留 aria2c(孤儿进程继续写同一文件会导致 SHA256 失败)
+    if command -v killall >/dev/null 2>&1; then
+        killall -9 aria2c 2>/dev/null && LOGGER "已清理残留 aria2c 进程"
+    fi
+
+    # 清理操作 onup 临时目录的 wget/curl 孤儿(只清理命令行含 Tmp_Path 的,不误杀系统其他下载)
+    if command -v pkill >/dev/null 2>&1 && [[ -n "${Tmp_Path}" ]]; then
+        local _d
+        for _d in wget-ssl wget curl; do
+            pkill -9 -f "${_d}.*${Tmp_Path}/" 2>/dev/null && LOGGER "已清理残留 ${_d} 进程"
+        done
+    fi
 }
 
 # ============ 缓存文件时效检测 ============
-# 用法: CHECK_TIME <file> <分钟数>
-# 输出: true/false
 CHECK_TIME() {
-    if [[ -s $1 && -n $(find "$1" -type f -mmin -"$2" 2>/dev/null) ]]; then
+    if [[ -s "$1" && -n $(find "$1" -type f -mmin -"$2" 2>/dev/null) ]]; then
         echo true
         return 0
     else
@@ -298,19 +301,46 @@ CHECK_TIME() {
     fi
 }
 
+# ============ 为小文件选择下载器 ============
+# 小文件(API 清单、脚本)优先单连接下载器,镜像友好不易触发 429
+# 用户显式 -D 只指定一个时尊重用户选择
+# 输出: 下载器名(单行);无可用返回 1
+_small_file_downloader() {
+    if [[ ${#DL_DEPENDS[@]} -eq 1 ]]; then
+        printf '%s\n' "${DL_DEPENDS[0]}"
+        return 0
+    fi
+
+    local d
+    # 优先小文件友好的单连接下载器
+    for d in curl wget-ssl wget uclient-fetch; do
+        if [[ "$(CHECK_PKG "$d")" == "true" ]]; then
+            printf '%s\n' "$d"
+            return 0
+        fi
+    done
+    # 都不可用,退回 DL_DEPENDS 第一个可用的
+    for d in "${DL_DEPENDS[@]}"; do
+        if [[ "$(CHECK_PKG "$d")" == "true" ]]; then
+            printf '%s\n' "$d"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # ============================================================
 # 保存当前运行日志到持久化位置
-# 目的: 自动升级后设备重启,/tmp 清空,日志需要保留供用户查看
-# 位置: /etc/onup/last.log (被 flash/升级流程覆盖)
+# 位置: /etc/onup/last.log (升级流程覆盖)
 # 限制: 只保留最近 MAX_LINES 行,避免 /etc 空间被占满
 # ============================================================
 SAVE_LAST_LOG() {
-	local src="${Log_Path}/${Log_File}"
-	local dst="/etc/onup/last.log"
-	local MAX_LINES=500
+    local src="${Log_Path}/${Log_File}"
+    local dst="/etc/onup/last.log"
+    local MAX_LINES=500
 
-	[[ -s "$src" ]] || return 0
-	mkdir -p /etc/onup 2>/dev/null
-	tail -n "$MAX_LINES" "$src" > "$dst" 2>/dev/null
-	[[ -s "$dst" ]] && LOGGER "运行日志已持久化: [$dst]"
+    [[ -s "$src" ]] || return 0
+    mkdir -p /etc/onup 2>/dev/null
+    tail -n "$MAX_LINES" "$src" > "$dst" 2>/dev/null
+    [[ -s "$dst" ]] && LOGGER "运行日志已持久化: [$dst]"
 }

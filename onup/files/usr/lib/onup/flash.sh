@@ -6,35 +6,6 @@
 # 【依赖】util.sh + detect.sh + mirror.sh + download.sh
 #         fetch.sh + pick.sh + verify.sh
 # 【被依赖】主入口(do_upgrade → run_upgrade)
-#
-# 【输入(全局变量)】
-#   Force_Mode Force_Flash Decompress_Mode Skip_Verify_Mode
-#   Nobody_Mode Test_Mode Verbose_Mode
-#   Firmware_Path DL_DEPENDS Upgrade_Option
-#   Special_Commands Special_MSG
-#   TARGET_PROFILE TARGET_BOARD x86_Boot_Method FW_Format
-#   FW_Image_Type FW_Suffix
-#   Mirror_List Mirror_Retry OP_VERSION
-#
-# 【导出函数】
-#   check_capacity <MB> <path>
-#     内存 + 磁盘容量检查
-#     返回: 0=通过 2=不足
-#
-#   do_flash <file> <sysupgrade args...>
-#     调 sysupgrade 并 reboot
-#
-#   run_upgrade
-#     ⭐ 主流程: prepare → verify → flash
-#     返回: 0=成功 1=业务失败 2=环境失败
-#
-#   prepare_upgrade       步骤1: 版本检查+决策
-#   download_and_verify   步骤2: BUILD_URLS + DOWNLOADER + SHA256 + 解压
-#   finalize_flash        步骤3: 调 sysupgrade
-#
-# 【关键约定】
-#   download_and_verify 必须先 BUILD_URLS 填充 LAST_URL_LIST
-#   再 DOWNLOADER --url-list 下载
 # ============================================================
 
 # ============ 内存/空间检查 ============
@@ -46,8 +17,6 @@ check_capacity() {
         return 0
     fi
 
-    # 尝试释放 page cache,让内存读数更接近真实可用值
-    # 部分 OpenWrt 无 /proc/sys/vm/drop_caches,失败也无妨(降级为不释放)
     (sync && echo 3 > /proc/sys/vm/drop_caches) 2>/dev/null
 
     if [[ $(MEMINFO All) -lt ${need_mb} ]]; then
@@ -75,7 +44,6 @@ do_flash() {
         exit 1
     else
         ECHO y "固件更新成功,即将重启设备 ..."
-        # reboot 跳过后面的 EXIT trap,必须显式保存日志
         SAVE_LAST_LOG
         sleep 3
         reboot
@@ -85,9 +53,6 @@ do_flash() {
 
 # ============ 升级流程编排 ============
 run_upgrade() {
-    # 标记"升级流程已启动"
-    # 主入口的 EXIT trap 会判断这个标记决定是否保存日志
-    # 目的: 避免 -V/--help 等轻量命令误覆盖 last.log
     _UPGRADE_RUNNING=1
     TITLE
     require_pkg sysupgrade || {
@@ -119,7 +84,6 @@ prepare_upgrade() {
         return 2
     fi
 
-    # 内部已打印具体原因,不再重复兜底文案
     if ! pick_best_firmware; then
         return 2
     fi
@@ -145,7 +109,6 @@ prepare_upgrade() {
         *) LOGGER "版本比较结果异常: [${ver_result}]"; Stop_Code=0 ;;
     esac
 
-    # 一次性拼装"固件格式"展示(x86 附加引导方式)
     local _fmt_display="${CLOUD_FW_Format}"
     [[ ${TARGET_BOARD} == x86 ]] && _fmt_display="${CLOUD_FW_Format} / ${x86_Boot_Method}"
 
@@ -187,6 +150,13 @@ $(echo -e "云端固件版本: ${CLOUD_FW_Version}${CHECKED_Type}")
                                     || err_MSG="云端固件版本为旧版"
             local Choose
             if [[ "${Force_Mode}" != "1" ]]; then
+                # 非交互环境(cron/无 TTY):未指定 -u/-f,中止,避免静默自动更新
+                # 测试模式(-T)跳过保护,允许非交互演练
+                if [[ ! -t 0 && "${Test_Mode}" != "1" ]]; then
+                    ECHO r "非交互环境,未指定 -u/-f,已中止更新"
+                    ECHO y "  定时任务请加 -u;强制刷写请加 -f 或 -F"
+                    return 1
+                fi
                 ECHO && read -p "${err_MSG},是否继续更新固件?[Y/n]:" Choose
                 [[ -z "${Choose}" ]] && Choose=Y
             else
@@ -202,16 +172,11 @@ $(echo -e "云端固件版本: ${CLOUD_FW_Version}${CHECKED_Type}")
 }
 
 # ============ 步骤 2: 下载 + 校验 ============
-# 改用 BUILD_URLS(填 LAST_URL_LIST) + DOWNLOADER --url-list
 download_and_verify() {
-    # BUILD_URLS 会填充全局 LAST_URL_LIST / LAST_URL_RETRY
     BUILD_URLS "${CLOUD_FW_Url}" "${Mirror_Retry}" || return 2
     ECHO g "镜像下载列表: [${LAST_URL_LIST[*]}]"
 
-    # reuse 逻辑:
-    #   --skip-verify + 本地有文件 → 直接复用(不校验)
-    #   默认           + 本地有文件且 SHA256 匹配 → 复用
-    #   默认           + 本地有文件但 SHA256 不匹配 → 删除,走下载
+    # 固件下载不传 --total-timeout:200MB 固件在弱网下需足够时间
     local reuse_cache=0
     if [[ -s "${Firmware_Path}/${CLOUD_FW_Name}" ]]; then
         if [[ "${Skip_Verify_Mode}" == "1" ]]; then
@@ -226,6 +191,10 @@ download_and_verify() {
                 LOGGER "复用已下载固件: [${Firmware_Path}/${CLOUD_FW_Name}]"
                 reuse_cache=1
             else
+                # 若云端未提供 SHA256,本地文件无法校验,明确告知用户将重新下载
+                if [[ -z "${CLOUD_FW_SHA256}" ]]; then
+                    ECHO y "云端未提供 SHA256,无法校验本地文件,将重新下载"
+                fi
                 LOGGER "本地固件校验不一致 [${local_hash} != ${CLOUD_FW_SHA256}],重新下载"
                 RM "${Firmware_Path}/${CLOUD_FW_Name}"
             fi
@@ -233,7 +202,6 @@ download_and_verify() {
     fi
 
     if [[ ${reuse_cache} != 1 ]]; then
-        # DOWNLOADER 走 --url-list 从 LAST_URL_LIST 读
         DOWNLOADER --file-name "${CLOUD_FW_Name}" --no-url-name --dl "${DL_DEPENDS[@]}" \
             --url-list --path "${Firmware_Path}" --timeout 30 --type 固件
         local dl_rc=$?

@@ -5,31 +5,6 @@
 #
 # 【依赖】所有模块
 # 【被依赖】主入口(dispatch)
-#
-# 【导出函数】
-#   SHELL_HELP                       --help
-#   SHOW_VARIABLE                    --list
-#   REMOVE_CACHE                     --clean / --reset 内部
-#   do_backup                        --backup
-#   do_chk                           --chk
-#   do_reset                         --reset
-#   do_clean                         --clean
-#   do_list                          --list
-#   do_api                           --api
-#   LOG / do_log                     --log
-#   LIST_ENV / do_env                --env
-#   UPDATE_SCRIPT / do_update_script -x
-#   ALTER_API_URL / do_alter_api_url -C / --api-url
-#   ALTER_BOOT / do_alter_boot       -B
-#   ALTER_FLAG / do_alter_flag       --flag
-#   do_script_version                -v
-#   do_fw_version                    -V
-#   do_fw_log                        --fw-log
-#   do_help                          --help
-#
-# 【关键约定】
-#   UPDATE_SCRIPT 用 BUILD_URLS + DOWNLOADER --url-list
-#   不要用 URL_LIST_SAVE / download_file_with_arrays
 # ============================================================
 
 # ============ 帮助 ============
@@ -163,7 +138,6 @@ do_backup() {
 do_chk() {
     CHECK_PKG_DEPENDS -e "${PKG_DEPENDS[@]}" "${DL_DEPENDS[@]}"
 
-    # 通用网络连通性
     if [[ $(NETWORK_CHECK https://connectivitycheck.platform.hicloud.com/generate_204) == false ]]; then
         ECHO r "HiCloud 连接错误!"
     else
@@ -220,23 +194,19 @@ do_reset() {
     exit 0
 }
 
-# ============ 清理 ============
 do_clean() {
     REMOVE_CACHE
     exit 0
 }
 
-# ============ 显示系统信息 ============
 do_list() {
     SHOW_VARIABLE
     exit $?
 }
 
-# ============ API 输出 ============
 do_api() {
     REMOVE_CACHE
     if ! fetch_api; then exit 1; fi
-    # 输出原始 API JSON(不再生成 API_File 表格)
     cat "${Tmp_Path}/API_Cache_${TARGET_FLAG}" 2>/dev/null
     exit 0
 }
@@ -246,7 +216,6 @@ LOG() {
     case $1 in
         -clean)
             : > "${Log_Path}/${Log_File}" 2>/dev/null
-            # 不走 ECHO(ECHO 内部会 LOGGER,又把日志文件写回一条)
             echo -e "\n${Grey}[$(date "+%H:%M:%S")]${White}${Green} onup 运行日志已清空!${White}"
             return 0
         ;;
@@ -302,8 +271,6 @@ do_log() {
 }
 
 # ============ 环境变量打印 ============
-# 用法: LIST_ENV <ENV1> [ENV2]...
-# 每个参数作为环境变量名,支持数组与标量
 LIST_ENV() {
     local ENV
     while [[ $1 ]]; do
@@ -338,9 +305,15 @@ UPDATE_SCRIPT() {
     fi
     ECHO "程序保存路径: [$1]"
 
+    # 小文件下载器:用户 -D 显式指定时用用户的,否则优先 curl/wget-ssl 单连接
+    local _sfd
+    _sfd="$(_small_file_downloader)"
+    [[ -z "$_sfd" ]] && { ECHO r "没有可用的下载器!"; return 1; }
+
     BUILD_URLS "$2" 1 || return 1
-    DOWNLOADER --file-name onup --no-url-name --dl "${DL_DEPENDS[@]}" \
-        --url-list --path "${Tmp_Path}" --timeout 5 --type 更新文件
+    # 脚本文件几百KB,给 60 秒总时长足够
+    DOWNLOADER --file-name onup --no-url-name --dl "${_sfd}" \
+        --url-list --path "${Tmp_Path}" --timeout 10 --total-timeout 60 --type 更新文件
 
     if [[ $? == 0 && -f "${Tmp_Path}/onup" ]]; then
         chmod +x "${Tmp_Path}/onup"
@@ -366,8 +339,6 @@ do_update_script() {
     [[ -n "${OPT_VALUE[Opt_Path]}" ]] && target="${OPT_VALUE[Opt_Path]}"
     [[ -n "${OPT_VALUE[Opt_Url]}"  ]] && url="${OPT_VALUE[Opt_Url]}"
 
-    # x 子命令跳过了 LOAD_VARIABLE,需要手动读
-    # Script_Url / Mirror_* / Downloader(与 do_script_version 同构)
     if [[ -z "${url}" ]]; then
         url="$(GET_VARIABLE Script_Url "${Config_Custom}"  2>/dev/null)"
     fi
@@ -379,7 +350,6 @@ do_update_script() {
         exit 1
     fi
 
-    # 镜像配置:主入口未通过 -P 设置时从配置文件读
     if [[ -z "${Mirror_List}" ]]; then
         local _ml_d _ml_c _mr_d _mr_c _mt_d _mt_c
         _ml_d="$(GET_VARIABLE Mirror_List   "${Config_Default}" 2>/dev/null)"
@@ -396,21 +366,14 @@ do_update_script() {
     [[ -z "$Mirror_Random" ]] && Mirror_Random="1"
     [[ -z "$Mirror_Retry"  ]] && Mirror_Retry="1"
 
-    # -D 已在主入口处理,这里只处理配置文件里的 Downloader
+    # 从配置读用户显式配置的 Downloader,让 UPDATE_SCRIPT 内 _small_file_downloader 尊重
     if [[ -z "${OPT_VALUE[Opt_Downloader]}" ]]; then
         local _dl
         _dl="$(GET_VARIABLE Downloader "${Config_Custom}"  2>/dev/null)"
         [[ -z "${_dl}" ]] && _dl="$(GET_VARIABLE Downloader "${Config_Default}" 2>/dev/null)"
         case "${_dl}" in
-            ""|auto|AUTO|Auto)
-                # 走默认 DL_DEPENDS
-            ;;
             aria2c|wget-ssl|wget|curl|uclient-fetch)
                 DL_DEPENDS=("${_dl}")
-                ECHO y "使用配置的下载器: [${_dl}]"
-            ;;
-            *)
-                ECHO y "配置的下载器 [${_dl}] 不受支持,回退默认列表"
             ;;
         esac
     fi
@@ -548,9 +511,6 @@ do_script_version() {
     case "$v" in
         "") echo "${Version}" ;;
         [Cc]loud)
-            # script-version 子命令跳过了 LOAD_VARIABLE(允许配置损坏时执行),
-            # 需要手动读 Mirror_List / Mirror_Random / Mirror_Retry / Script_Url。
-            # 若主入口已通过 -P 设置了 Mirror_List,则不再从文件读。
             if [[ -z "${Mirror_List}" ]]; then
                 local _ml_d _ml_c _mr_d _mr_c _mt_d _mt_c
                 _ml_d="$(GET_VARIABLE Mirror_List   "${Config_Default}" 2>/dev/null)"
@@ -567,24 +527,38 @@ do_script_version() {
             [[ -z "$Mirror_Random" ]] && Mirror_Random="1"
             [[ -z "$Mirror_Retry"  ]] && Mirror_Retry="1"
 
+            # 从配置读 Downloader,让 _small_file_downloader 尊重用户显式配置
+            if [[ -z "${OPT_VALUE[Opt_Downloader]}" ]]; then
+                local _dl
+                _dl="$(GET_VARIABLE Downloader "${Config_Custom}"  2>/dev/null)"
+                [[ -z "${_dl}" ]] && _dl="$(GET_VARIABLE Downloader "${Config_Default}" 2>/dev/null)"
+                case "${_dl}" in
+                    aria2c|wget-ssl|wget|curl|uclient-fetch)
+                        DL_DEPENDS=("${_dl}")
+                    ;;
+                esac
+            fi
+
             if [[ -z "${Script_Url}" ]]; then
                 Script_Url="$(GET_VARIABLE Script_Url "${Config_Custom}" 2>/dev/null)"
             fi
             if [[ -z "${Script_Url}" ]]; then
                 Script_Url="$(GET_VARIABLE Script_Url "${Config_Default}" 2>/dev/null)"
             fi
-
             if [[ -z "${Script_Url}" ]]; then
-                # 诊断走 stderr,stdout 只保留版本号
                 ECHO r "无法获取脚本地址(Script_Url 未配置)" >&2
                 exit 1
             fi
 
-            # BUILD_URLS 内部有 LOGGER,重定向到 stderr 避免污染 stdout
+            # 小文件下载器选择
+            local _sfd
+            _sfd="$(_small_file_downloader)"
+            [[ -z "$_sfd" ]] && { ECHO r "无法获取脚本版本(无可用下载器)" >&2; exit 1; }
+
             BUILD_URLS "${Script_Url}" 1 >&2 || { ECHO r "URL 构造失败" >&2; exit 1; }
             local result
-            result=$(DOWNLOADER --file-name onup.tmp --no-url-name --dl "${DL_DEPENDS[@]}" \
-                --url-list --path "${Tmp_Path}" --print --type 临时程序 2>/dev/null \
+            result=$(DOWNLOADER --file-name onup.tmp --no-url-name --dl "${_sfd}" \
+                --url-list --path "${Tmp_Path}" --print --timeout 10 --total-timeout 30 --type 临时程序 2>/dev/null \
                 | awk -F= '/^Version=/{print $2; exit}')
             if [[ -z "$result" ]]; then
                 ECHO r "无法获取云端脚本版本" >&2
@@ -603,7 +577,6 @@ do_fw_version() {
     case "$v" in
         "") printf '%s\n' "${OP_VERSION}" ;;
         [Cc]loud)
-            # 诊断信息走 stderr,stdout 只保留最终版本号(供 LuCI 解析)
             fetch_api           >&2 || { ECHO r "获取云端固件版本失败!" >&2; exit 1; }
             pick_best_firmware  >&2 || { exit 1; }
             if ! GET_FW_INFO 5; then
@@ -621,9 +594,6 @@ do_fw_log() {
     if ! fetch_api; then exit 1; fi
     if ! pick_best_firmware; then exit 1; fi
 
-    # 双写缓存,供 LuCI fw_log 页面直接读取:
-    #   /tmp/onup/update.logs  → 快速读,重启丢
-    #   /etc/onup/update.logs  → 持久化,重启后/无网时回退
     if [[ -n "${FW_LOGS}" ]]; then
         [[ -d "${Tmp_Path}" ]] || mkdir -p "${Tmp_Path}" 2>/dev/null
         [[ -d "/etc/onup"    ]] || mkdir -p "/etc/onup"    2>/dev/null
@@ -631,7 +601,6 @@ do_fw_log() {
         printf '%s\n' "${FW_LOGS}" > "/etc/onup/update.logs"    2>/dev/null
     fi
 
-    # 日志已内嵌在 JSON,GET_CLOUD_LOG 直接输出
     GET_CLOUD_LOG
     exit $?
 }
