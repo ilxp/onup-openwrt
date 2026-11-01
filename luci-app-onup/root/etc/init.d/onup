@@ -1,0 +1,207 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2026 ilxp <https://github.com/ilxp\>
+# /etc/init.d/onup
+#
+# 从 UCI 读定时配置,生成 /etc/crontabs/root 中的 cron 任务
+# 配置直接同步到 custom
+
+START=99
+# 强制补全环境变量，防止后台调起时找不到命令
+export PATH="/usr/sbin:/usr/bin:/sbin:/bin"
+
+LOGGER="logger -t '[onup]'"
+
+Script_File="$(command -v onup)"
+[ -z "$Script_File" ] && Script_File="/usr/bin/onup"
+Script_Cmd="$Script_File -u"
+
+CRONTAB="/etc/crontabs/root"
+CRON_TAG="## onup crontab"
+CUSTOM_FILE="/etc/onup/custom"
+
+# ============================================================
+# UCI 读取工具（读取 onup.main）
+# ============================================================
+uci_get_by_type() {
+	local ret=$(uci -q get onup.main.$1)
+	echo "${ret:=$2}"
+}
+
+# ============================================================
+# 同步单个 key=value 到 custom
+# ============================================================
+sync_custom_kv() {
+    local key="$1" val="$2"
+    [ -f "$CUSTOM_FILE" ] || touch "$CUSTOM_FILE"
+
+    [ -z "$val" ] && return 0
+
+    local val_esc
+    val_esc=$(printf '%s' "$val" | sed 's/[\/&|\\]/\\&/g')
+
+    if grep -q "^${key}=" "$CUSTOM_FILE" 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=${val_esc}|" "$CUSTOM_FILE"
+    else
+        # 追加前保证文件末尾有换行（彻底解决粘连问题）
+        if [ -s "$CUSTOM_FILE" ] && [ "$(tail -c1 "$CUSTOM_FILE" | wc -l)" -eq 0 ]; then
+            echo >> "$CUSTOM_FILE"
+        fi
+        echo "${key}=${val}" >> "$CUSTOM_FILE"
+    fi
+}
+
+# ============================================================
+# 删除旧 cron 任务
+# ============================================================
+remove_cron_tasks() {
+	[ -f "$CRONTAB" ] || return 0
+	sed -i "/$CRON_TAG/d" "$CRONTAB" 2> /dev/null
+}
+
+# ============================================================
+# 启动(由 LuCI 或系统触发)
+# ============================================================
+start() {
+	# ---------- 1. 读 UCI 字段 ----------
+	local enable schedule_type week day hour minute
+	local api_url flag logpath
+	local upgrade_no_config skip_verify force_flash decompress
+	local mirror_list mirror_random mirror_retry x86_boot_method
+	local downloader
+
+	enable=$(uci_get_by_type enable 0)
+	schedule_type=$(uci_get_by_type schedule_type weekly)
+	week=$(uci_get_by_type week 0)
+	day=$(uci_get_by_type day 1)
+	hour=$(uci_get_by_type hour 0)
+	minute=$(uci_get_by_type minute 30)
+	api_url=$(uci_get_by_type api_url "")
+	flag=$(uci_get_by_type flag "")
+	logpath=$(uci_get_by_type logpath "")
+
+	upgrade_no_config=$(uci_get_by_type upgrade_no_config 0)
+	skip_verify=$(uci_get_by_type skip_verify 0)
+	force_flash=$(uci_get_by_type force_flash 0)
+	decompress=$(uci_get_by_type decompress 0)
+
+	mirror_list=$(uci_get_by_type mirror_list "")
+	mirror_random=$(uci_get_by_type mirror_random "")
+	mirror_retry=$(uci_get_by_type mirror_retry "")
+	x86_boot_method=$(uci_get_by_type x86_boot_method "")
+	downloader=$(uci_get_by_type downloader "")
+
+	# ---------- 2. 检查脚本 ----------
+	if [ ! -x "$Script_File" ]; then
+		${LOGGER} "Unable to access $Script_File, exit ..."
+		stop
+		return 1
+	fi
+
+	# ---------- 3. 同步配置到 custom(无论是否启用都执行) ----------
+	# ★ 核心修复：抛弃 $Script_File 调用，全部用 sync_custom_kv，绝不粘连
+	sync_custom_kv "API_Url" "$api_url"
+	sync_custom_kv "TARGET_FLAG" "$flag"
+	sync_custom_kv "Log_Path" "$logpath"
+
+	# 3.2 Mirror_List:支持 <direct> 哨兵显式直连
+	# ★ 修复 sh 语法：用 tr 代替 bash 的 ${var,,}
+	local ml_lc=$(echo "$mirror_list" | tr '[:upper:]' '[:lower:]')
+	case "$ml_lc" in
+		"<direct>"|"direct"|"<none>"|"none"|"<off>"|"off")
+			sync_custom_kv "Mirror_List" "<direct>"
+			;;
+		"")
+			# 未配置 → 保留 custom 现状
+			;;
+		*)
+			sync_custom_kv "Mirror_List" "$mirror_list"
+			;;
+	esac
+
+	# 3.3 其余字段走通用 sync
+	sync_custom_kv "Mirror_Random"    "$mirror_random"
+	sync_custom_kv "Mirror_Retry"     "$mirror_retry"
+	
+	if [ -n "$x86_boot_method" ] && [ "$x86_boot_method" != "auto" ]; then
+		sync_custom_kv "x86_Boot_Method" "$x86_boot_method"
+	else
+		sed -i '/^x86_Boot_Method=/d' "$CUSTOM_FILE" 2>/dev/null
+	fi
+	
+	sync_custom_kv "Downloader"       "$downloader"
+
+	# ---------- 4. 未启用 → 清 cron + 退出 ----------
+	if [ "$enable" != "1" ]; then
+		${LOGGER} "onup Service is disabled ..."
+		stop
+		return 0
+	fi
+
+	# ---------- 5. 构造 cron 时间表达式 ----------
+	[ -z "$hour" ]   && hour=0
+	[ -z "$minute" ] && minute=30
+
+	local cron_time
+	case "$schedule_type" in
+		monthly)
+			[ -z "$day" ] && day=1
+			[ "$day" -lt 1 ]  && day=1
+			[ "$day" -gt 31 ] && day=31
+			cron_time="$minute $hour $day * *"
+			${LOGGER} "Schedule Type: Monthly (day=$day)"
+		;;
+		weekly|*)
+			[ -z "$week" ] && week=0
+			[ "$week" = "7" ] && week='*'
+			cron_time="$minute $hour * * $week"
+			${LOGGER} "Schedule Type: Weekly (week=$week)"
+		;;
+	esac
+
+	# ---------- 6. 组装额外参数 ----------
+	local extra_args=""
+	[ "$upgrade_no_config" = "1" ] && extra_args="$extra_args -n"
+	[ "$skip_verify" = "1" ]       && extra_args="$extra_args --skip-verify"
+	[ "$force_flash" = "1" ]       && extra_args="$extra_args -F"
+	[ "$decompress" = "1" ]        && extra_args="$extra_args --decompress"
+
+	# ---------- 7. 重写 cron 任务 ----------
+	remove_cron_tasks
+	${LOGGER} "Creating cron_task [$cron_time $Script_Cmd $extra_args] ..."
+	echo "$cron_time $Script_Cmd $extra_args		$CRON_TAG" >> "$CRONTAB"
+	/etc/init.d/cron restart
+
+	${LOGGER} "onup Service started."
+}
+
+# ============================================================
+# 停止(删除 cron)
+# ============================================================
+stop() {
+	${LOGGER} "Removing all cron tasks ..."
+	remove_cron_tasks
+	/etc/init.d/cron restart
+}
+
+# 显式定义 restart
+restart() {
+    stop
+    start
+}
+
+# ============================================================
+# 禁用
+# ============================================================
+disable() {
+	${LOGGER} "Closing onup Service ..."
+	uci set onup.main.enable="0" 2> /dev/null
+	uci commit onup 2>/dev/null
+	stop
+}
+
+# ============================================================
+# procd reload 触发
+# ============================================================
+service_triggers() {
+	procd_add_reload_trigger "onup"
+}

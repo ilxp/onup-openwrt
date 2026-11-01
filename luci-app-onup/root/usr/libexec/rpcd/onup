@@ -1,0 +1,22 @@
+#!/bin/sh
+. /usr/share/libubox/jshn.sh
+
+case "$1" in
+list)
+	cat <<'JSON'
+{
+	"restart": { }
+}
+JSON
+	;;
+call)
+	method="$2"
+	if [ "$method" = "restart" ]; then
+		# 以 root 权限在后台执行，绝对不会卡住前端
+		( /etc/init.d/onup restart >/dev/null 2>&1 & )
+		json_init
+		json_add_boolean ok 1
+		json_dump
+	fi
+	;;
+esac

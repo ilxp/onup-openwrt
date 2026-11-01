@@ -1,0 +1,35 @@
+{
+	"luci-app-onup": {
+		"description": "Grant access to ONUP configuration",
+		"read": {
+			"file": {
+				"/etc/onup/custom": [ "read" ],
+				"/etc/onup/default": [ "read" ],
+				"/etc/onup/update.logs": [ "read" ],
+				"/etc/onup/last.log": [ "read" ],
+				"/tmp/onup.log": [ "read" ],
+				"/tmp/Cloud_Version": [ "read" ],
+				"/tmp/Cloud_Script_Version": [ "read" ],
+				"/etc/openwrt_release": [ "read" ],
+				"/usr/bin/onup": [ "read", "exec" ],
+				"/etc/init.d/onup": [ "read", "exec" ]
+			},
+			"ubus": {
+				"service": [ "list" ],
+				"rc": [ "init" ],
+				"onup": [ "restart" ],
+				"file": [ "*" ]
+			},
+			"uci": [ "onup" ]
+		},
+		"write": {
+			"file": {
+				"/tmp/onup.log": [ "write" ],
+				"/etc/onup/last.log": [ "write" ],
+				"/tmp/Cloud_Version": [ "write" ],
+				"/tmp/Cloud_Script_Version": [ "write" ]
+			},
+			"uci": [ "onup" ]
+		}
+	}
+}
