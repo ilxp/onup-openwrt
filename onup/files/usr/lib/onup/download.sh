@@ -2,56 +2,6 @@
 # Copyright (C) 2026 ilxp <https://github.com/ilxp>
 # ============================================================
 # download.sh - 多下载器统一接口
-#
-# 【依赖】util.sh(ECHO/RM/CHECK_PKG)
-#         config.sh(DL_DEPENDS/Log_Path)
-# 【被依赖】fetch.sh / flash.sh / misc.sh
-#
-# 【输入(全局变量)】
-#   LAST_URL_LIST[]    由 BUILD_URLS 填充
-#   LAST_URL_RETRY[]   由 BUILD_URLS 填充
-#   DL_DEPENDS[]       候选下载器
-#   Tmp_Path           默认下载目录
-#   Test_Mode / Verbose_Mode
-#
-# 【导出函数】
-#   DOWNLOADER <args>
-#     --file-name <name>     保存文件名
-#     --url-list             从 LAST_URL_LIST 读
-#     --url <single>         单 URL 模式
-#     --path <dir>           下载目录
-#     --dl <d1> <d2>...      候选下载器
-#     --timeout <sec>        单 URL 读写超时
-#     --total-timeout <sec>  整个下载操作的最长时长(仅小文件用)
-#     --type <desc>          显示描述
-#     --no-url-name          直接 URL 不加文件名
-#     --print                输出到 stdout 不保存
-#     返回: 0=成功 1=失败
-#
-#   download_file_with_arrays <name> <path> <type> <dl> <timeout> <no_url_name> <print_mode>
-#     函数式兼容接口
-#
-#   download_one <url> <name> [path]
-#     单 URL 快捷方式
-#
-# 【进度显示策略】
-#   渠道 1(终端): stderr 是终端时,下载器自身进度条
-#   渠道 2(syslog): 无条件启动"文件大小监控",每 2 秒写一条
-#   两个渠道同时工作,互不干扰。
-#   仅 --print 模式(用于 -v cloud 拉脚本)跳过监控。
-#
-# 【aria2c 参数约定】
-#   -x 4 -s 4 -k 1M         4连接/4分片/最小1M
-#                           降低并发避免 ghfast.top 等镜像 429 限流
-#   --continue=true         断点续传(下载前会 rm -f 文件)
-#   --max-tries=1           单 URL 重试由外层控制
-#   无 --lowest-speed-limit 弱网不误判
-#   退出码用 PIPESTATUS[0]  避免被管道吞掉
-#
-# 【--total-timeout 使用约定】
-#   仅用于小文件(API 清单、脚本),限制整个下载操作最长时长
-#   实现: 替换模板开头的 `timeout N`;curl 同时替换 --max-time
-#   固件下载不要传,200MB 固件在弱网下可能超过 30 秒
 # ============================================================
 
 # ============ 判断 logger 是否可用 ============
@@ -79,7 +29,6 @@ _get_remote_size() {
     fi
 
     # 回退 wget
-    # -O /dev/null: 若当前 wget 不支持 --spider(如 busybox wget),防止退化为真下载并产生 wget-log
     if [[ ! "${sz}" =~ ^[0-9]+$ || ${sz} -lt 1 ]]; then
         local _w=""
         command -v wget-ssl >/dev/null 2>&1 && _w=wget-ssl
@@ -125,7 +74,7 @@ _download_core() {
         _dl_progress=1
     fi
 
-    # ---------- 后台进度监控(与下载器/tty 无关,仅 --print 时跳过) ----------
+    # ---------- 后台进度监控(统一接管所有下载器) ----------
     local _monitor_pid=""
     local _head_pid_global=""
     local _size_file_global=""
@@ -147,9 +96,10 @@ _download_core() {
     case "$dl_downloader" in
         aria2c)
             if [[ ${_dl_progress} == 1 ]]; then
-                DL_Template="timeout 600 aria2c --allow-overwrite=true --auto-file-renaming=false --console-log-level=error --show-console-readout=true --summary-interval=0 --max-tries=1 --connect-timeout=15 --timeout=60 -x 4 -s 4 -k 1M -d"
+                DL_Template="timeout 600 aria2c --allow-overwrite=true --auto-file-renaming=false --console-log-level=error --show-console-readout=true --summary-interval=0 --max-tries=1 --connect-timeout=15 --timeout=60 -x 4 -s 4 -k 1M --file-allocation=none -d"
             else
-                DL_Template="timeout 600 aria2c --allow-overwrite=true --auto-file-renaming=false --console-log-level=warn --show-console-readout=false --summary-interval=0 --max-tries=1 --connect-timeout=15 --timeout=60 -x 4 -s 4 -k 1M -d"
+                # 非 tty 模式：彻底关闭 aria2c 的原生进度，完全交给外层监控
+                DL_Template="timeout 600 aria2c --allow-overwrite=true --auto-file-renaming=false --console-log-level=warn --show-console-readout=false --summary-interval=0 --max-tries=1 --connect-timeout=15 --timeout=60 -x 4 -s 4 -k 1M --file-allocation=none -d"
             fi
         ;;
         wget*)
@@ -179,8 +129,7 @@ _download_core() {
         ;;
     esac
 
-    # --timeout 替换:兼容 `--timeout N`(空格)与 `--timeout=N`(等号)两种语法
-    # 注意 --connect-timeout 是单横线 `-timeout=`,不会被 `--timeout=` 误伤
+    # --timeout 替换
     if [[ -n "$dl_timeout" ]]; then
         DL_Template="${DL_Template/--timeout 10/--timeout ${dl_timeout}}"
         DL_Template="${DL_Template/--timeout 30/--timeout ${dl_timeout}}"
@@ -244,7 +193,7 @@ _download_core() {
             rm -f "${dl_path}/${dl_name}" "${dl_path}/${dl_name}.aria2"
             LOGGER "执行下载指令: [${DL_Final}]"
 
-            # ---------- 启动后台进度监控(仅 --print 时跳过) ----------
+            # ---------- 启动后台进度监控(统一接管，不做区分) ----------
             _stop_monitor
             if [[ ${print_mode} != 1 ]]; then
                 local _target_file="${dl_path}/${dl_name}"
@@ -260,6 +209,7 @@ _download_core() {
 
                 (
                     _last_cur=""
+                    _last_pct=""
                     while kill -0 "${_parent_pid}" 2>/dev/null; do
                         sleep 2
                         [[ -e "${_target_file}" ]] || continue
@@ -268,10 +218,20 @@ _download_core() {
                         _cur="${_cur//[^0-9]/}"
                         [[ "${_cur}" =~ ^[0-9]+$ ]] || continue
                         [[ ${_cur} -gt 0 ]] || continue
-                        [[ "${_cur}" == "${_last_cur}" ]] && continue
-                        _last_cur="${_cur}"
-
-                        _ts_now="$(cat "${_size_file}" 2>/dev/null)"
+                        
+                        _ts_now_check="$(cat "${_size_file}" 2>/dev/null)"
+                        if [[ "${_ts_now_check}" =~ ^[0-9]+$ && ${_ts_now_check} -gt 0 ]]; then
+                            _pct_check=$(( _cur * 100 / _ts_now_check ))
+                            [[ ${_pct_check} -gt 100 ]] && _pct_check=100
+                            # 只有当百分比发生变化时才更新日志，避免刷屏
+                            [[ "${_pct_check}" == "${_last_pct}" ]] && continue
+                            _last_pct="${_pct_check}"
+                        else
+                            [[ "${_cur}" == "${_last_cur}" ]] && continue
+                            _last_cur="${_cur}"
+                        fi
+                        
+                        _ts_now="${_ts_now_check}"
                         _mib=$(( _cur / 1048576 ))
 
                         if [[ "${_ts_now}" =~ ^[0-9]+$ && ${_ts_now} -gt 0 ]]; then
@@ -303,10 +263,11 @@ _download_core() {
                     ${DL_Final}
                     dl_rc=$?
                 else
-                    ${DL_Final} 2>&1 | while IFS= read -r line; do
+                    ${DL_Final} 2>&1 | tr '\r' '\n' | while IFS= read -r line; do
                         printf '%s\n' "$line" >&2
                         [[ -z "$line" ]] && continue
 
+                        # 【已移除 aria2c 原生进度正则】，让进度纯靠外层监控输出
                         case "$line" in
                             *"Download Progress Summary"*) continue ;;
                             *"===="*) continue ;;

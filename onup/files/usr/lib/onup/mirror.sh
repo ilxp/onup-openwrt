@@ -46,6 +46,15 @@ build_url_list() {
         return 1
     fi
 
+    # <direct> 哨兵识别
+    local _ml_orig="${Mirror_List}"
+    case "${Mirror_List,,}" in
+        "<direct>"|"direct"|"<none>"|"none"|"<off>"|"off")
+            Mirror_List=""
+            LOGGER "Mirror_List=[${_ml_orig}] 识别为显式直连"
+            ;;
+    esac
+
     # 无镜像配置 → 只加直连
     if [[ -z "${Mirror_List}" ]]; then
         URL_LIST+=("$orig_url")

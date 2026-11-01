@@ -2,10 +2,6 @@
 # Copyright (C) 2026 ilxp <https://github.com/ilxp>
 # ============================================================
 # flash.sh - 容量检查 + sysupgrade 刷写 + 升级编排
-#
-# 【依赖】util.sh + detect.sh + mirror.sh + download.sh
-#         fetch.sh + pick.sh + verify.sh
-# 【被依赖】主入口(do_upgrade → run_upgrade)
 # ============================================================
 
 # ============ 内存/空间检查 ============
@@ -68,7 +64,16 @@ run_upgrade() {
 
     [[ ${Special_Commands} ]] && ECHO g "特殊指令:${Special_Commands} | ${Upgrade_Option}"
     ECHO g "执行: 更新固件${Special_MSG}"
-    [[ -z "${Mirror_List}" ]] && ECHO "未配置镜像,直连原始 URL"
+
+    # 识别 <direct> 哨兵(与 mirror.sh 保持一致)
+    case "${Mirror_List,,}" in
+        "")
+            ECHO "未配置镜像,直连原始 URL"
+            ;;
+        "<direct>"|"direct"|"<none>"|"none"|"<off>"|"off")
+            ECHO "显式直连(已忽略镜像列表),直连原始 URL"
+            ;;
+    esac
 
     prepare_upgrade || exit $?
     download_and_verify || exit $?
@@ -147,16 +152,16 @@ $(echo -e "云端固件版本: ${CLOUD_FW_Version}${CHECKED_Type}")
             fi
             local err_MSG
             [[ ${Stop_Code} == 1 ]] && err_MSG="当前固件 [${OP_VERSION}] 已是最新版本" \
-                                    || err_MSG="云端固件版本为旧版"
+                                    || err_MSG="云端固件 [${CLOUD_FW_Version}] 为旧版"
             local Choose
             if [[ "${Force_Mode}" != "1" ]]; then
-                # 非交互环境(cron/无 TTY):未指定 -u/-f,中止,避免静默自动更新
-                # 测试模式(-T)跳过保护,允许非交互演练
-                if [[ ! -t 0 && "${Test_Mode}" != "1" ]]; then
-                    ECHO r "非交互环境,未指定 -u/-f,已中止更新"
-                    ECHO y "  定时任务请加 -u;强制刷写请加 -f 或 -F"
+                # 【核心拦截】只要是非交互环境（包括 -T 测试模式），绝对不继续
+                if [[ ! -t 0 ]]; then
+                    ECHO r "${err_MSG},已自动中止操作!"
+                    ECHO y "  定时任务更新请加 -u;强制覆盖请加 -f"
                     return 1
                 fi
+                # 交互终端才询问
                 ECHO && read -p "${err_MSG},是否继续更新固件?[Y/n]:" Choose
                 [[ -z "${Choose}" ]] && Choose=Y
             else
@@ -173,10 +178,19 @@ $(echo -e "云端固件版本: ${CLOUD_FW_Version}${CHECKED_Type}")
 
 # ============ 步骤 2: 下载 + 校验 ============
 download_and_verify() {
+    # SHA256 格式预检查:避免"下载 100MB 后才发现 hash 格式不对"
+    # 仅在需要校验时执行(Skip_Verify_Mode=1 时不校验,无需检查格式)
+    if [[ "${Skip_Verify_Mode}" != "1" && -n "${CLOUD_FW_SHA256}" && "${CLOUD_FW_SHA256}" != "-" ]]; then
+        if [[ ! "${CLOUD_FW_SHA256,,}" =~ ^[0-9a-f]{64}$ ]]; then
+            ECHO r "云端 SHA256 格式异常(期望 64 位十六进制): [${CLOUD_FW_SHA256}]"
+            ECHO y "  请更新 API 生成器，或使用 --skip-verify 跳过校验(危险)"
+            return 2
+        fi
+    fi
+
     BUILD_URLS "${CLOUD_FW_Url}" "${Mirror_Retry}" || return 2
     ECHO g "镜像下载列表: [${LAST_URL_LIST[*]}]"
 
-    # 固件下载不传 --total-timeout:200MB 固件在弱网下需足够时间
     local reuse_cache=0
     if [[ -s "${Firmware_Path}/${CLOUD_FW_Name}" ]]; then
         if [[ "${Skip_Verify_Mode}" == "1" ]]; then
@@ -184,14 +198,14 @@ download_and_verify() {
             LOGGER "复用(跳过校验): [${Firmware_Path}/${CLOUD_FW_Name}]"
             reuse_cache=1
         else
+            # 全量 SHA256 比较(64 位，统一小写)
             local local_hash
-            local_hash="$(GET_SHA256SUM "${Firmware_Path}/${CLOUD_FW_Name}" 5)"
-            if [[ -n "${local_hash}" && "${local_hash}" == "${CLOUD_FW_SHA256}" ]]; then
+            local_hash="$(GET_SHA256SUM "${Firmware_Path}/${CLOUD_FW_Name}")"
+            if [[ -n "${local_hash}" && "${local_hash,,}" == "${CLOUD_FW_SHA256,,}" ]]; then
                 ECHO y "检测到已下载固件 [${CLOUD_FW_Name}] 且 SHA256 校验通过,复用本地文件"
                 LOGGER "复用已下载固件: [${Firmware_Path}/${CLOUD_FW_Name}]"
                 reuse_cache=1
             else
-                # 若云端未提供 SHA256,本地文件无法校验,明确告知用户将重新下载
                 if [[ -z "${CLOUD_FW_SHA256}" ]]; then
                     ECHO y "云端未提供 SHA256,无法校验本地文件,将重新下载"
                 fi
@@ -212,6 +226,7 @@ download_and_verify() {
     fi
 
     if [[ ! ${Skip_Verify_Mode} == 1 && ${reuse_cache} != 1 ]]; then
+        ECHO "正在校验下载文件的完整性 ..."
         if ! verify_sha256 "${Firmware_Path}/${CLOUD_FW_Name}" "${CLOUD_FW_SHA256}"; then
             ECHO r "SHA256 校验失败!"
             return 1

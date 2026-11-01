@@ -17,7 +17,7 @@
 #   CHECK_PKG <命令>         输出 true/false
 #   CHECK_PKG_DEPENDS -e     仅用于 --chk 显示
 #   RANDOM_HEX <位数>        随机十六进制
-#   GET_SHA256SUM <文件> <位数>
+#   GET_SHA256SUM <文件> [N] 输出 SHA256;省略 N 则全量 64 位
 #   NETWORK_CHECK <URL>      输出 true/false
 #   KILL_PROCESS <pattern>   杀掉匹配进程(含 aria2c/wget/curl 孤儿)
 #   CHECK_TIME <文件> <分钟> 输出 true/false
@@ -203,13 +203,20 @@ RANDOM_HEX() {
     head -n 5 /dev/urandom | md5sum | cut -c 1-"$1"
 }
 
-# ============ SHA256 前 N 位 ============
+# ============ SHA256(可选前 N 位,省略则全量 64 位) ============
+# >>> 修改：n 参数改为可选，省略时输出完整 64 位（小写十六进制）
 GET_SHA256SUM() {
-    local f="$1" n="$2"
-    [[ -z "$f" || -z "$n" ]] && return 1
+    local f="$1" n="${2:-}"
+    [[ -z "$f" ]] && return 1
     [[ ! -r "$f" ]] && return 1
     local Result
-    Result="$(sha256sum "$f" 2>/dev/null | cut -c1-"$n")" || return 1
+    if [[ -z "$n" ]]; then
+        # 全量 64 位
+        Result="$(sha256sum "$f" 2>/dev/null | awk '{print $1}')" || return 1
+    else
+        [[ ! "$n" =~ ^[0-9]+$ ]] && return 1
+        Result="$(sha256sum "$f" 2>/dev/null | cut -c1-"$n")" || return 1
+    fi
     [[ -n "$Result" ]] || return 1
     printf '%s\n' "${Result}"
     return 0

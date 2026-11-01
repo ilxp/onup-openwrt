@@ -63,6 +63,7 @@ SHELL_HELP() {
 镜像配置:
     编辑 /etc/onup/custom (优先) 或 default 修改 Mirror_List
     格式: 逗号/分号/空格分隔的 URL 列表，为空则直连
+    如需显式禁用镜像,设 Mirror_List=<direct>
 
 程序、固件更新问题反馈请到 https://github.com/ilxp/oprx-release 反馈,并上程序运行日志与系统信息
 "
@@ -72,6 +73,22 @@ SHELL_HELP() {
 # ============ 系统信息 ============
 SHOW_VARIABLE() {
     TITLE
+
+    # Mirror_List 显示映射:<direct> 哨兵 / 空 / 正常
+    # 必须在 heredoc 之前求值(heredoc 只做变量展开，不执行 case 语句)
+    local _ml_display
+    case "${Mirror_List,,}" in
+        "")
+            _ml_display="<未配置,直连>"
+            ;;
+        "<direct>"|"direct"|"<none>"|"none"|"<off>"|"off")
+            _ml_display="<显式直连>"
+            ;;
+        *)
+            _ml_display="${Mirror_List}"
+            ;;
+    esac
+
     cat <<EOF
 设备名称:		$(uname -n) / ${TARGET_PROFILE} *
 固件前缀:		${FW_Prefix}
@@ -91,7 +108,7 @@ OpenWrt Source:		https://github.com/${OP_AUTHOR}/${OP_REPO}:${OP_BRANCH} *
 临时文件路径:		${Tmp_Path}
 日志文件:		${Log_Path}/${Log_File}
 可用下载器:		< ${DL_DEPENDS[@]} >
-镜像列表:		${Mirror_List:-<未配置,直连>}
+镜像列表:		${_ml_display}
 镜像随机:		${Mirror_Random} (1=是, 0=否)
 镜像重试:		${Mirror_Retry}
 EOF

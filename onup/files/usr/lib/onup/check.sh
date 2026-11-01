@@ -127,13 +127,13 @@ echo
 # ============================================================
 echo "[4] URL 数组一致性"
 
-if grep -qE '^\s*LAST_URL_LIST=' "$LIB_PATH/mirror.sh" 2>/dev/null; then
+if grep -qE '^[[:space:]]*LAST_URL_LIST=' "$LIB_PATH/mirror.sh" 2>/dev/null; then
     ok "mirror.sh 填充 LAST_URL_LIST"
 else
     fail "mirror.sh 未填充 LAST_URL_LIST"
 fi
 
-if grep -qE '^\s*LAST_URL_RETRY=' "$LIB_PATH/mirror.sh" 2>/dev/null; then
+if grep -qE '^[[:space:]]*LAST_URL_RETRY=' "$LIB_PATH/mirror.sh" 2>/dev/null; then
     ok "mirror.sh 填充 LAST_URL_RETRY"
 else
     fail "mirror.sh 未填充 LAST_URL_RETRY"
@@ -219,7 +219,7 @@ echo
 # ============================================================
 echo "[6] aria2c 参数"
 
-ARIA2C_LINE=$(grep -E '^\s*DL_Template=' "$LIB_PATH/download.sh" 2>/dev/null | head -1)
+ARIA2C_LINE=$(grep -E '^[[:space:]]*DL_Template=' "$LIB_PATH/download.sh" 2>/dev/null | head -1)
 
 if [[ -z "$ARIA2C_LINE" ]]; then
     fail "download.sh 未找到 DL_Template 赋值"

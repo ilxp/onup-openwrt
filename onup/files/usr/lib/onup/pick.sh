@@ -2,23 +2,6 @@
 # Copyright (C) 2026 ilxp <https://github.com/ilxp>
 # ============================================================
 # pick.sh - 从 API 挑固件 + 版本比较 + 云端日志
-#
-# 【JSON 结构】
-#   {
-#     "<profile>": [
-#       { build_date, name, re_url, size, sha256sum, logs },
-#       ...
-#     ]
-#   }
-#
-# 【输入(全局变量)】
-#   FW_Prefix TARGET_FLAG TARGET_PROFILE
-#   TARGET_BOARD x86_Boot_Method FW_Format FW_Image_Type
-#   OP_VERSION Tmp_Path
-#
-# 【输出(全局数组)】
-#   FW_CACHE[name/format/sha256/version/date/size/url]
-#   FW_LOGS     固件更新日志(内嵌,从选中条目取)
 # ============================================================
 
 # ============ 从文件名解析属性 ============
@@ -26,27 +9,21 @@ _parse_fw_name() {
     local name="$1"
     _PN_tag="" _PN_version="" _PN_format="" _PN_image_type="" _PN_boot="" _PN_suffix=""
 
-    # ---- tag + version ----
-    # 版本支持 2~4 段: oR25.12 / oR25.12.5 / oR25.12.5.1
-    # 可跟 -YYYYMMDDHH(可选,10位)
-    # TARGET_FLAG 可能含正则元字符(如 . + * ?),先转义避免误匹配
     local _flag_esc
-	_flag_esc=""
-	local _i _c
-	for (( _i=0; _i<${#TARGET_FLAG}; _i++ )); do
-		_c="${TARGET_FLAG:_i:1}"
-		case "$_c" in
-			'.'|'\'|'^'|'$'|'*'|'+'|'?'|'('|')'|'{'|'}'|'|'|'['|']') _flag_esc+="\\${_c}" ;;
-			*) _flag_esc+="${_c}" ;;
-		esac
-	done
+    _flag_esc=""
+    local _i _c
+    for (( _i=0; _i<${#TARGET_FLAG}; _i++ )); do
+        _c="${TARGET_FLAG:_i:1}"
+        case "$_c" in
+            '.'|'\'|'^'|'$'|'*'|'+'|'?'|'('|')'|'{'|'}'|'|'|'['|']') _flag_esc+="\\${_c}" ;;
+            *) _flag_esc+="${_c}" ;;
+        esac
+    done
     if [[ "${name}" =~ ${_flag_esc}([0-9]+(\.[0-9]+){1,3})(-[0-9]{10})? ]]; then
         _PN_tag="${TARGET_FLAG}"
-        # 拼接日期部分(可选),如25.12.5-2026100112
         _PN_version="${BASH_REMATCH[1]}${BASH_REMATCH[3]}"
     fi
 
-    # ---- format ----
     local _f
     for _f in squashfs ext4 ubifs f2fs jffs2 btrfs erofs; do
         if [[ "${name}" == *"-${_f}-"* || "${name}" == *"-${_f}."* ]]; then
@@ -55,7 +32,6 @@ _parse_fw_name() {
         fi
     done
 
-    # ---- image_type ----
     local _t
     for _t in combined sysupgrade factory; do
         if [[ "${name}" == *"-${_t}-"* || "${name}" == *"-${_t}."* ]]; then
@@ -64,13 +40,11 @@ _parse_fw_name() {
         fi
     done
 
-    # ---- boot (x86): 要求 boot 后紧跟 . 避免 -biosfix 之类误匹配 ----
     if [[ "${name}" =~ -(uefi|efi|bios)\. ]]; then
         _PN_boot="${BASH_REMATCH[1],,}"
         [[ "${_PN_boot}" == "uefi" ]] && _PN_boot="efi"
     fi
 
-    # ---- suffix ----
     case "${name}" in
         *.img.gz) _PN_suffix="img.gz" ;;
         *.img)    _PN_suffix="img" ;;
@@ -90,7 +64,6 @@ pick_best_firmware() {
         return 1
     fi
 
-    # 按 TARGET_PROFILE 查表
     local _entries
     _entries="$(jq -c --arg prof "${TARGET_PROFILE}" '.[$prof] // []' "$API_Cache" 2>/dev/null)"
 
@@ -100,13 +73,6 @@ pick_best_firmware() {
         return 1
     fi
 
-    # ------------------------------------------------------------
-    # 两轮遍历:
-    #   strict 轮: 完整筛选(含 x86 boot 引导方式)
-    #   loose  轮: 只在 strict 空时执行,放宽 boot 筛选
-    #              用于"BIOS 设备 + 云端仅有 EFI 固件"的兼容场景
-    #              (EFI 固件兼容 BIOS 启动时可用)
-    # ------------------------------------------------------------
     local _best_bd=0 _best_item="" _best_boot=""
     local _item _name _bd _round _round_hit=""
 
@@ -115,22 +81,18 @@ pick_best_firmware() {
         _best_item=""
 
         while IFS= read -r _item; do
-            # 单次 jq 取 name + build_date(用 \x1f 作字段分隔符,不误切含空格的 name)
             IFS=$'\x1f' read -r _name _bd <<<"$(echo "${_item}" | jq -r '[.name // "", .build_date // "0"] | join("\u001f")')"
             [[ -z "${_name}" || "${_name}" == "null" ]] && continue
 
-            # profile 检查(双保险)
             [[ "${_name}" != *"-${TARGET_PROFILE}-"* ]] && continue
 
             _parse_fw_name "${_name}"
 
-            # 筛选(tag / format / image_type / suffix 两轮一致)
             [[ "${_PN_tag}"        != "${TARGET_FLAG}"      ]] && continue
             [[ "${_PN_format}"     != "${FW_Format}"        ]] && continue
             [[ "${_PN_image_type}" != "${FW_Image_Type}"    ]] && continue
             [[ -n "${FW_Suffix}" && "${_PN_suffix}" != "${FW_Suffix}" ]] && continue
 
-            # boot 筛选: 仅 strict 轮生效
             if [[ "${_round}" == "strict" ]]; then
                 if [[ "${TARGET_BOARD}" == "x86" && -n "${x86_Boot_Method}" && "${x86_Boot_Method}" != "auto" ]]; then
                     local _want_boot="${x86_Boot_Method,,}"
@@ -139,14 +101,34 @@ pick_best_firmware() {
                 fi
             fi
 
-            if [[ "${_bd}" =~ ^[0-9]+$ ]] && (( _bd > _best_bd )); then
-                _best_bd="${_bd}"
-                _best_item="${_item}"
-                _best_boot="${_PN_boot}"
+            # 核心修复：以文件名中的版本号为准进行比较
+            if [[ "${_bd}" =~ ^[0-9]+$ ]]; then
+                if [[ -z "${_best_item}" ]]; then
+                    _best_item="${_item}"
+                    _best_bd="${_bd}"
+                    _best_boot="${_PN_boot}"
+                else
+                    local _cur_ver="${_PN_version}"
+                    local _cur_boot="${_PN_boot}"     # 在覆盖前先保存当前 item 的 boot
+                    _parse_fw_name "$(echo "${_best_item}" | jq -r '.name // ""')"
+                    local _best_ver="${_PN_version}"
+
+                    local _vc
+                    _vc="$(VERSION_COMPARE "${_cur_ver}" "${_best_ver}")"
+
+                    if [[ "$_vc" == "1" ]]; then
+                        _best_item="${_item}"
+                        _best_bd="${_bd}"
+                        _best_boot="${_cur_boot}"      # 用保存的当前 boot
+                    elif [[ "$_vc" == "0" && "${_bd}" -gt "${_best_bd}" ]]; then
+                        _best_item="${_item}"
+                        _best_bd="${_bd}"
+                        _best_boot="${_cur_boot}"      # 用保存的当前 boot
+                    fi
+                fi
             fi
         done < <(echo "${_entries}" | jq -c '.[]' 2>/dev/null)
 
-        # 命中则记录轮次并跳出
         if [[ -n "${_best_item}" ]]; then
             _round_hit="${_round}"
             break
@@ -162,14 +144,12 @@ pick_best_firmware() {
         return 1
     fi
 
-    # 兼容回退:loose 轮命中时明确告警(用户需自担风险)
     if [[ "${_round_hit}" == "loose" ]]; then
         ECHO r "警告: 未找到匹配 [${x86_Boot_Method}] 引导方式的固件!"
         ECHO r "       已回退到 [${_best_boot:-未知}] 引导的固件(固件兼容 BIOS 启动时可用)"
         ECHO y "       若刷写后设备无法启动,请用控制台/救援模式恢复,不要断电重启!"
     fi
 
-    # 从选中条目取字段(全部在条目内)
     local _name _size _sha _re_url _logs
     _name="$(echo   "${_best_item}" | jq -r '.name // ""')"
     _size="$(echo   "${_best_item}" | jq -r '.size // 0')"
@@ -193,7 +173,14 @@ pick_best_firmware() {
     FW_CACHE=()
     FW_CACHE[name]="${_name}"
     FW_CACHE[format]="${_PN_format:--}"
-    FW_CACHE[sha256]="${_sha:0:5}"
+    # >>> 修改：sha256 存完整 64 位(小写) 供 verify_sha256 全量比对
+    #   - 云端未提供("-" 或空)→ 保持 "-"，verify_sha256 会跳过
+    #   - 云端提供 → 统一小写，避免 API 返回大写时比对失败
+    if [[ "${_sha}" == "-" || -z "${_sha}" ]]; then
+        FW_CACHE[sha256]="-"
+    else
+        FW_CACHE[sha256]="${_sha,,}"
+    fi
     FW_CACHE[version]="${_PN_version:--}"
     FW_CACHE[date]="${_best_bd}"
     FW_CACHE[size]="${_size_mb}"
@@ -205,13 +192,14 @@ pick_best_firmware() {
     return 0
 }
 
-# ============ 查询固件信息(从 FW_CACHE) ============
+# ============ 查询固件信息 ============
 GET_FW_INFO() {
     local key
     case $1 in
         1) key=name ;;
         2) key=format ;;
-        3) return 1 ;;          # count 字段已废弃
+        3) return 1 ;;
+        # >>> 修改：4 号字段现为完整 64 位 sha256(小写)；云端未提供时为 "-"
         4) key=sha256 ;;
         5) key=version ;;
         6) key=date ;;
@@ -248,9 +236,13 @@ VERSION_COMPARE() {
     fi
 
     if [[ "$new_main" != "$old_main" ]]; then
-        local IFS='.'
-        local -a na=($new_main) oa=($old_main)
-        unset IFS
+        # >>> 修改：改用 read -ra 拆分，避免 glob 字符被展开
+        #   原写法 local -a na=($new_main) 在 new_main 含 '*' '?' '[' 时
+        #   会先做路径展开 → 可能得到意外元素甚至空数组
+        #   read -ra 不做 glob，纯按 IFS 拆分，安全
+        local -a na=() oa=()
+        IFS='.' read -ra na <<< "$new_main"
+        IFS='.' read -ra oa <<< "$old_main"
         local max=$((${#na[@]} > ${#oa[@]} ? ${#na[@]} : ${#oa[@]}))
         local i n o
         for ((i=0; i<max; i++)); do
@@ -280,7 +272,7 @@ GET_CLOUD_LOG() {
     fi
 
     printf '\n%b%s 固件更新日志:%b\n\n' "${Grey}" "${FW_CACHE[version]}" "${Green}"
-	printf '%s\n' "${FW_LOGS}"
+    printf '%s\n' "${FW_LOGS}"
     printf '%b\n' "${White}"
     return 0
 }

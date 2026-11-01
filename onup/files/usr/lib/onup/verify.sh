@@ -12,18 +12,17 @@
 #
 # 【依赖】util.sh(GET_SHA256SUM/RM/ECHO/LOGGER)
 # 【被依赖】flash.sh(download_and_verify)
-
+#
 # 【导出函数】
 #   verify_sha256 <file> <expect_hash>
-#     对比文件 SHA256 前 5 位
+#     对比文件完整 SHA256(64 位十六进制)
 #     expect 为空或 "-" 时跳过
 #     返回: 0=通过 1=失败
 #
 #   decompress_fw <file>
 #     解压 .gz 并删除原文件
 #     副作用: 设置全局变量 DECOMPRESSED_NAME
-#     返回: 0=成功 1=空文件 2=解压失败
-# ============================================================
+#     返回: 0=成功 1=空文件 2=解压失败 3=不支持的格式
 # ============================================================
 
 verify_sha256() {
@@ -31,12 +30,23 @@ verify_sha256() {
     [[ ! -s "$file" ]] && { LOGGER "文件不存在: [$file]"; return 1; }
     [[ -z "$expect" || "$expect" == "-" ]] && return 0
 
+    # >>> 修改：全量比较
+    #   1. 统一小写
+    #   2. 强校验格式(64 位十六进制)
+    #   3. GET_SHA256SUM 省略位数 = 全量
+    expect="${expect,,}"
+    if [[ ! "$expect" =~ ^[0-9a-f]{64}$ ]]; then
+        ECHO r "云端提供的 SHA256 格式异常(期望 64 位十六进制): [${expect}]"
+        return 1
+    fi
+
     local got
-    got="$(GET_SHA256SUM "$file" 5)"
+    got="$(GET_SHA256SUM "$file")"
     if [[ "$got" != "$expect" ]]; then
         LOGGER "SHA256 校验失败: [$got != $expect]"
         return 1
     fi
+    LOGGER "SHA256 校验通过: [$got]"
     return 0
 }
 
@@ -125,8 +135,8 @@ decompress_fw() {
             return 2
         fi
     ;;
-	
-	# ============================================================
+
+    # ============================================================
     # img: 已是可刷格式,无需解压
     # ============================================================
     *.img)
