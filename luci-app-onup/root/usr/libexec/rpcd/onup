@@ -1,0 +1,37 @@
+#!/bin/sh
+. /usr/share/libubox/jshn.sh
+
+case "$1" in
+list)
+	cat <<'JSON'
+{
+	"restart": { },
+	"run": { "cmd": "string" }
+}
+JSON
+	;;
+call)
+	method="$2"
+	if [ "$method" = "restart" ]; then
+		( /etc/init.d/onup restart >/dev/null 2>&1 & )
+		json_init
+		json_add_boolean ok 1
+		json_dump
+	elif [ "$method" = "run" ]; then
+		INPUT=$(cat)
+		json_load "$INPUT"
+		json_get_var cmd cmd
+		
+		logpath=$(uci -q get onup.main.logpath)
+		[ -z "$logpath" ] && logpath="/tmp"
+		
+		# 修复：这里把 >> "${logpath}/onup.log" 去掉，改成 >/dev/null
+		# 因为 onup 自带 LOGGER 会写日志，丢掉它的 stdout 避免重复和乱码！
+		( export PATH="/usr/sbin:/usr/bin:/sbin:/bin"; echo "=== MANUAL UPGRADE $(date "+%Y-%m-%d %H:%M:%S") ===" > "${logpath}/onup.log"; /usr/bin/onup $cmd >/dev/null 2>&1 </dev/null & )
+		
+		json_init
+		json_add_boolean ok 1
+		json_dump
+	fi
+	;;
+esac

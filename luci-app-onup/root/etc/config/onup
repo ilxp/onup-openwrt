@@ -1,0 +1,29 @@
+config onup 'main'
+	# ============ 定时任务 ============
+	option enable '0'
+	option schedule_type 'weekly'
+	option week '0'
+	option day '1'
+	option hour '0'
+	option minute '30'
+
+	# ============ 高级选项(仅定时任务生效) ============
+	# 每项对应 onup 的一个命令行参数
+	# 全部默认关闭,用户在 LuCI 手动开启
+	option upgrade_no_config '0'
+	option skip_verify '0'
+	option force_flash '0'
+	option decompress '0'
+
+	# ============ 脚本配置字段 ============
+	# 以下字段不预设默认值,由 LuCI 从 /etc/onup/custom 读取显示
+	# 用户修改后才会写入 UCI,再由 init 同步到 custom
+	#
+	# 可选字段:
+	#   option github 'https://github.com/ilxp/oprx-release'
+	#   option flag 'oR'
+	#   option logpath '/tmp'
+	#   option mirror_list 'https://gh-proxy.org,https://ghfast.top'
+	#   option mirror_random '1'
+	#   option mirror_retry '1'
+	#   option x86_boot_method 'UEFI'

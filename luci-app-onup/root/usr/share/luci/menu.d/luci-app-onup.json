@@ -1,0 +1,45 @@
+{
+	"admin/system/onup": {
+		"title": "ONUP",
+		"order": 99,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [ "luci-app-onup" ],
+			"uci": [ "onup" ]
+		}
+	},
+	"admin/system/onup/main": {
+		"title": "General Settings",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "onup/main"
+		}
+	},
+	"admin/system/onup/manual": {
+		"title": "Manually Upgrade",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "onup/manual"
+		}
+	},
+	"admin/system/onup/rt_log": {
+		"title": "Runtime Log",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "onup/rt_log"
+		}
+	},
+	"admin/system/onup/fw_log": {
+		"title": "Release Notes",
+		"order": 31,
+		"action": {
+			"type": "view",
+			"path": "onup/fw_log"
+		}
+	}
+}

@@ -1,0 +1,300 @@
+#!/bin/bash
+# Copyright (C) 2026 ilxp <https://github.com/ilxp>
+# onup - 模块化主入口
+#
+# 模块:
+#   config.sh    常量 + 参数表
+#   util.sh      基础工具
+#   detect.sh    设备探测
+#   mirror.sh    镜像 URL 生成
+#   download.sh  多下载器
+#   fetch.sh     API 拉取
+#   pick.sh      挑固件 + 版本比较
+#   verify.sh    SHA256 + 解压
+#   flash.sh     容量检查 + 刷写
+#   misc.sh      其他子命令
+
+Version=V1.0.0
+
+# ============ 加载模块 ============
+LIB_PATH="${LIB_PATH:-/usr/lib/onup}"
+
+for _mod in config util detect mirror download fetch pick verify flash misc; do
+    if [[ -r "${LIB_PATH}/${_mod}.sh" ]]; then
+        source "${LIB_PATH}/${_mod}.sh"
+    else
+        echo "缺少模块: ${LIB_PATH}/${_mod}.sh" >&2
+        exit 1
+    fi
+done
+unset _mod
+
+# ============ 参数状态容器 ============
+declare -A OPT_FLAG
+declare -A OPT_VALUE
+declare -A FW_CACHE
+declare -a URL_LIST
+declare -a URL_RETRY
+
+# ============ 子命令检测 ============
+detect_subcommand() {
+    local a
+    for a in "$@"; do
+        case "$a" in
+            --help)          echo help;           return ;;
+            --api)           echo api;            return ;;
+            --chk)           echo chk;            return ;;
+            --clean)         echo clean;          return ;;
+            --reset)         echo reset;          return ;;
+            --list)          echo list;           return ;;
+            -x)              echo x;              return ;;
+            --backup)        echo backup;         return ;;
+            --log)           echo log;            return ;;
+            -clean|-del|-rm) echo log;            return ;;
+            --fw-log)        echo fw-log;         return ;;
+            --env)           echo env;            return ;;
+            --flag)          echo flag;           return ;;
+            -B|--boot-mode)  echo boot-mode;      return ;;
+            -C|--api-url)    echo api-url;        return ;;
+            -v)              echo script-version; return ;;
+            -V)              echo fw-version;     return ;;
+        esac
+    done
+    echo upgrade
+}
+
+# ============ 参数解析 ============
+parse_args() {
+    OPT_FLAG=()
+    OPT_VALUE=()
+
+    while [[ $# -gt 0 ]]; do
+        local key="$1" spec type target
+        spec="$(param_lookup "$key")" || { ECHO r "未知参数: [$key]"; return 1; }
+        IFS='|' read -r type target <<< "$spec"
+
+        case "$type" in
+            flag)
+                OPT_FLAG[$target]=1
+                shift
+            ;;
+            value)
+                shift
+                [[ $# -eq 0 ]] && { ECHO r "参数 [$key] 缺少值"; return 1; }
+                OPT_VALUE[$target]="$1"
+                shift
+            ;;
+            optval)
+                shift
+                if [[ $# -gt 0 && ! "$1" =~ ^- ]]; then
+                    OPT_VALUE[$target]="$1"
+                    shift
+                else
+                    OPT_VALUE[$target]=""
+                fi
+            ;;
+            multi)
+                shift
+                local vals=()
+                while [[ $# -gt 0 && ! "$1" =~ ^- ]]; do
+                    vals+=("$1")
+                    shift
+                done
+                OPT_VALUE[$target]="${vals[*]}"
+            ;;
+            *)
+                ECHO r "参数表类型错误: [$type]"
+                return 1
+            ;;
+        esac
+    done
+    return 0
+}
+
+# ============ 分发 ============
+dispatch() {
+    local sub="$1"
+    case "$sub" in
+        help)           do_help ;;
+        api)            do_api ;;
+        chk)            do_chk ;;
+        clean)          do_clean ;;
+        reset)          do_reset ;;
+        list)           do_list ;;
+        x)              do_update_script ;;
+        backup)         do_backup ;;
+        log)            do_log ;;
+        fw-log)         do_fw_log ;;
+        env)            do_env ;;
+        flag)           do_alter_flag ;;
+        boot-mode)      do_alter_boot ;;
+        api-url)        do_alter_api_url ;;
+        script-version) do_script_version ;;
+        fw-version)     do_fw_version ;;
+        upgrade)        do_upgrade ;;
+        *)
+            ECHO r "未知子命令: [$sub]"
+            exit 1
+        ;;
+    esac
+}
+
+# ============ 状态初始化 ============
+function init_state() {
+    Test_Mode=0
+    Verbose_Mode=0
+    Force_Mode=0
+    Force_Flash=0
+    Decompress_Mode=0
+    Skip_Verify_Mode=0
+    Nobody_Mode=0
+    Special_Commands=""
+    Special_MSG=""
+    Stop_Code=0
+    Firmware_Path=""
+    Upgrade_Option=""
+    FW_CACHE=()
+    FW_LOGS=""
+}
+
+# ============ 升级主流程 ============
+do_upgrade() {
+    Force_Mode=0
+    Force_Flash=0
+    Decompress_Mode=0
+    Skip_Verify_Mode=0
+    Nobody_Mode=0
+    Special_Commands=""
+    Special_MSG=""
+    Firmware_Path="${Tmp_Path}"
+
+    [[ -n "${OPT_FLAG[Opt_Force]}"      ]] && { Force_Mode=1; Force_Flash=1; }
+    [[ -n "${OPT_FLAG[Opt_ForceFlash]}" ]] && Force_Flash=1
+    [[ -n "${OPT_FLAG[Opt_Decompress]}" ]] && Decompress_Mode=1
+    [[ -n "${OPT_FLAG[Opt_SkipVerify]}" ]] && Skip_Verify_Mode=1
+    [[ -n "${OPT_FLAG[Opt_Nobody]}"     ]] && Nobody_Mode=1
+
+    if [[ -n "${OPT_VALUE[Opt_Path]}" ]]; then
+        Firmware_Path="${OPT_VALUE[Opt_Path]}"
+        if [[ "${Firmware_Path}" =~ [[:space:]] ]]; then
+            ECHO r "路径不能包含空格: [${Firmware_Path}]"
+            exit 1
+        fi
+        if [[ ! -d "${Firmware_Path}" ]]; then
+            if mkdir -p "${Firmware_Path}" 2>/dev/null; then
+                LOGGER "已创建固件保存路径: [${Firmware_Path}]"
+            else
+                ECHO r "固件保存路径 [${Firmware_Path}] 创建失败,请检查权限!"
+                exit 1
+            fi
+        fi
+        ECHO g "固件保存路径: [${Firmware_Path} | $(SPACEINFO "${Firmware_Path}")M]"
+    fi
+
+    Upgrade_Option="$(command -v sysupgrade) -q"
+    [[ ${Force_Flash} == 1 ]] && Upgrade_Option="${Upgrade_Option} -F"
+    if [[ -n "${OPT_FLAG[Opt_NoConfig]}" ]]; then
+        Upgrade_Option="${Upgrade_Option} -n"
+        Special_MSG=" (不保留配置)"
+    fi
+
+    [[ ${Test_Mode} == 1 ]] && Special_Commands="${Special_Commands} [测试模式]"
+    [[ -n "${OPT_VALUE[Opt_Downloader]}" ]] && Special_Commands="${Special_Commands} [-D ${OPT_VALUE[Opt_Downloader]}]"
+    [[ ${Force_Flash} == 1 && ${Force_Mode} != 1 ]] && Special_Commands="${Special_Commands} [强制刷写]"
+    [[ ${Decompress_Mode} == 1         ]] && Special_Commands="${Special_Commands} [优先解压固件]"
+    [[ ${Force_Mode} == 1              ]] && Special_Commands="${Special_Commands} [强制模式]"
+    [[ ${Skip_Verify_Mode} == 1        ]] && Special_Commands="${Special_Commands} [跳过 SHA256 验证]"
+    [[ ${Nobody_Mode} == 1             ]] && Special_Commands="${Special_Commands} [定时更新]"
+    [[ -n "${OPT_FLAG[Opt_Verbose]}"   ]] && Special_Commands="${Special_Commands} [详细信息]"
+
+    run_upgrade
+}
+
+# ============ 主入口 ============
+function onup_Main() {
+    init_state
+
+    local sub
+    sub="$(detect_subcommand "$@")"
+
+    if ! parse_args "$@"; then
+        SHELL_HELP
+        exit 1
+    fi
+
+    [[ -n "${OPT_FLAG[Opt_Test]}"    ]] && Test_Mode=1
+    [[ -n "${OPT_FLAG[Opt_Verbose]}" ]] && Verbose_Mode=1
+
+    case "$sub" in
+        help|chk|log|reset|clean|script-version|x|backup|api-url|flag) ;;
+        *)
+            if ! command -v jq >/dev/null 2>&1; then
+                ECHO r "缺少必需依赖 jq,请先安装后再试:"
+                ECHO y "  OpenWrt 24.10 及更早:  opkg install jq"
+                ECHO y "  OpenWrt 25.12 及更新:  apk add jq"
+                exit 1
+            fi
+            LOAD_VARIABLE "${Config_Default}" "${Config_Custom}"
+            detect_device
+        ;;
+    esac
+
+    if [[ "${sub}" != "help" ]] && [[ -n "${OPT_VALUE[Opt_Proxy]+x}" ]]; then
+        if [[ -z "${OPT_VALUE[Opt_Proxy]}" ]]; then
+            ECHO r "参数 -P/--proxy 需要指定镜像地址"
+            ECHO y "示例: -P https://a.com"
+            ECHO y "      也支持多地址(逗号/分号/空格分隔): -P https://a.com,https://b.com"
+            ECHO y "分隔符用 分号/空格 时需加单引号"
+            exit 1
+        fi
+        Mirror_List="${OPT_VALUE[Opt_Proxy]}"
+        ECHO y "使用命令行指定镜像: [${Mirror_List}]"
+    fi
+
+    if [[ -n "${OPT_VALUE[Opt_Downloader]}" ]]; then
+        case "${OPT_VALUE[Opt_Downloader]}" in
+            aria2c|wget-ssl|wget|curl|uclient-fetch)
+                DL_DEPENDS=("${OPT_VALUE[Opt_Downloader]}")
+                ECHO y "使用命令行指定下载器: [${OPT_VALUE[Opt_Downloader]}]"
+            ;;
+            *)
+                ECHO r "暂不支持当前下载器: [${OPT_VALUE[Opt_Downloader]}]"
+                ECHO y "  支持: aria2c / wget-ssl / wget / curl / uclient-fetch"
+                exit 1
+            ;;
+        esac
+    fi
+
+    [[ ! -d "${Tmp_Path}" ]] && mkdir -p "${Tmp_Path}"
+
+    dispatch "$sub"
+}
+
+# ============ source 守卫 ============
+_sourced=0
+if [[ -n "${BASH_VERSION:-}" ]]; then
+    [[ "${BASH_SOURCE[0]}" != "${0}" ]] && _sourced=1
+fi
+if [[ ${_sourced} == 0 ]]; then
+    cleanup_on_signal() {
+        echo
+        echo "已中断,清理子进程..."
+        if command -v pkill >/dev/null 2>&1; then
+            pkill -9 -f aria2c 2>/dev/null
+        else
+            killall -9 aria2c 2>/dev/null
+        fi
+        for p in $(jobs -p); do
+            kill -9 "$p" 2>/dev/null
+        done
+        exit 130
+    }
+    trap cleanup_on_signal INT TERM
+
+    _save_log_on_exit() {
+        [[ "${_UPGRADE_RUNNING}" == "1" ]] && SAVE_LAST_LOG
+    }
+    trap _save_log_on_exit EXIT
+
+    onup_Main "$@"
+fi
