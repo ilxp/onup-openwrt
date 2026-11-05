@@ -1,0 +1,12 @@
+#!/bin/sh
+
+chmod 0755 /etc/init.d/onup
+
+uci -q batch <<-EOF >/dev/null
+	delete ucitrack.@onup[-1]
+	add ucitrack onup
+	set ucitrack.@onup[-1].init=onup
+	commit ucitrack
+EOF
+
+exit 0

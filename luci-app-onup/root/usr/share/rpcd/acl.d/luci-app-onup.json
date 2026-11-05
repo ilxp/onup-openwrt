@@ -1,0 +1,42 @@
+{
+	"luci-app-onup": {
+		"description": "Grant access to ONUP configuration",
+		"read": {
+			"file": {
+				"/etc/onup/custom": [ "read" ],
+				"/etc/onup/default": [ "read" ],
+				"/etc/onup/update.logs": [ "read" ],
+				"/etc/onup/last.log": [ "read" ],
+				"/tmp/onup.log": [ "read" ],
+				"/tmp/onup/update.logs": [ "read" ],
+				"/tmp/Cloud_Version": [ "read" ],
+				"/tmp/Cloud_Script_Version": [ "read" ],
+				"/etc/openwrt_release": [ "read" ],
+				"/usr/bin/onup": [ "read", "exec" ],
+				"/bin/sh": [ "read", "exec" ],
+				"/etc/init.d/onup": [ "read", "exec" ],
+				"/etc/config/onup": [ "read" ],
+				"/etc/crontabs/root": [ "read" ]
+			},
+			"ubus": {
+				"service": [ "list" ],
+				"rc": [ "init" ],
+				"onup": [ "restart", "run" ], 
+				"file": [ "*" ]
+			},
+			"uci": [ "onup" ]
+		},
+		"write": {
+			"file": {
+				"/tmp/onup.log": [ "write" ],
+				"/etc/onup/update.logs": [ "write" ],
+				"/etc/onup/last.log": [ "write" ],
+				"/tmp/Cloud_Version": [ "write" ],
+				"/tmp/Cloud_Script_Version": [ "write" ],
+				"/etc/onup/custom": [ "write" ],
+				"/etc/crontabs/root": [ "write" ]
+			},
+			"uci": [ "onup" ]
+		}
+	}
+}

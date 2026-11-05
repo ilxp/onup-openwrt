@@ -1,0 +1,31 @@
+#!/bin/sh
+# 彻底抛弃 jshn.sh，防止底层缺失导致 Not found
+
+case "$1" in
+list)
+	cat <<'JSON'
+{
+	"restart": { },
+	"run": { "cmd": "string" }
+}
+JSON
+	;;
+call)
+	method="$2"
+	if [ "$method" = "restart" ]; then
+		( /etc/init.d/onup restart >/dev/null 2>&1 & )
+		echo '{"ok":true}'
+	elif [ "$method" = "run" ]; then
+		INPUT=$(cat)
+		# 使用最原始的 sed 提取 cmd 的值，绝不报错
+		cmd=$(echo "$INPUT" | sed -n 's/.*"cmd"\s*:\s*"\([^"]*\)".*/\1/p')
+		
+		logpath=$(uci -q get onup.main.logpath)
+		[ -z "$logpath" ] && logpath="/tmp"
+		
+		( export PATH="/usr/sbin:/usr/bin:/sbin:/bin"; echo "=== MANUAL UPGRADE $(date "+%Y-%m-%d %H:%M:%S") ===" > "${logpath}/onup.log"; /usr/bin/onup $cmd >/dev/null 2>&1 </dev/null & )
+		
+		echo '{"ok":true}'
+	fi
+	;;
+esac
