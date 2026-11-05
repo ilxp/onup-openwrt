@@ -80,7 +80,9 @@ RM() {
         case "$i" in
             /|/.|/..|.|..) LOGGER "删除拒绝(危险路径): [$i]"; continue ;;
         esac
-        [[ ! -e "$i" && ! -L "$i" ]] && { LOGGER "删除跳过(不存在): [$i]"; continue; }
+        # ★ 核心修改：如果是文件不存在，直接静默跳过，不再打印日志
+        [[ ! -e "$i" && ! -L "$i" ]] && continue
+        
         rm -rf -- "$i" 2>/dev/null
         [[ $? == 0 ]] && LOGGER "删除成功: [$i]" || LOGGER "删除失败: [$i]"
     done

@@ -335,6 +335,14 @@ UPDATE_SCRIPT() {
     if [[ $? == 0 && -f "${Tmp_Path}/onup" ]]; then
         chmod +x "${Tmp_Path}/onup"
         Script_Version="$(awk -F '=' '/^Version=/{print $2}' "${Tmp_Path}/onup" | awk 'NR==1')"
+        
+        # 判断云端版本与当前版本是否相同
+        if [[ "${Version}" == "${Script_Version}" ]]; then
+            ECHO y "当前脚本版本 [${Version}] 已是最新,无需更新!"
+            REMOVE_CACHE
+            return 0
+        fi
+
         mv -f "${Tmp_Path}/onup" "$1"
         if [[ $? == 0 ]]; then
             ECHO y "[${Version} > ${Script_Version}] onup 程序更新成功!"
